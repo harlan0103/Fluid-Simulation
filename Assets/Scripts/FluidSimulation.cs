@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.UIElements;
 
 public class FluidSimulation : MonoBehaviour
 {
@@ -10,24 +11,35 @@ public class FluidSimulation : MonoBehaviour
     public Material mat;
     public LineRenderer boundingBoxRenderer;
 
+    public int numParticles = 1;
+
     [Range(0.05f, 5.0f)]
-    public float particleSize;
+    public float particleSize = 0.1f;
+    public int gravity = 5;
     [Range(0.4f, 1.0f)]
     public float collisionDamping = 0.8f;
-
-    public int numParticles = 1;
 
     private List<GameObject> particleList;
 
     private Vector2 boundSize;
+    private Vector2[] positions;
+    private Vector2[] velocities;
+    private float[] particleProperties;
 
     // Start is called before the first frame update
     void Start()
     {
         particleList = new List<GameObject>();
 
+        // Initialize 
         boundSize = CalculateViewPortSize();
         DrawBoundary();
+
+        // Randomly create particles
+        RandomCreateParticles(1024);
+
+        // Draw particles on the screen
+        UpdateParticleMovement();
     }
 
     // Update is called once per frame
@@ -75,6 +87,22 @@ public class FluidSimulation : MonoBehaviour
         }
     }
 
+    void RandomCreateParticles(int seed)
+    {
+        System.Random rng = new(seed);
+        positions = new Vector2[numParticles];
+        particleProperties = new float[numParticles];
+        velocities = new Vector2[numParticles];
+
+        for (int i = 0; i < positions.Length; i++)
+        {
+            float x = (float)(rng.NextDouble() - 0.5) * boundSize.x;
+            float y = (float)(rng.NextDouble() - 0.5) * boundSize.y;
+
+            positions[i] = new Vector2(x, y);
+        }
+    }
+
     void UpdateParticleMovement()
     {
         // Delete all existing particles first
@@ -87,7 +115,17 @@ public class FluidSimulation : MonoBehaviour
             Destroy(particle);
         }
 
-        DrawCircle(Vector2.zero, particleSize, Colour.lightblue);
+        for (int i = 0; i < positions.Length; i++)
+        {
+            ResolveCollisions(ref positions[i], ref velocities[i]);
+            velocities[i] += Vector2.down * gravity * Time.deltaTime;
+            positions[i] += velocities[i] * Time.deltaTime;
+        }
+
+        for (int i = 0; i < positions.Length; i++)
+        {
+            DrawCircle(positions[i], particleSize, Colour.lightblue);
+        }
     }
 
     void DrawCircle(Vector2 position, float radius, Color colour)
