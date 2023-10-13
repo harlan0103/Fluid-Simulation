@@ -10,20 +10,72 @@ public class FluidSimulation : MonoBehaviour
     public Material mat;
     public LineRenderer boundingBoxRenderer;
 
-    [Range(0.2f, 5.0f)]
+    [Range(0.05f, 5.0f)]
     public float particleSize;
+    [Range(0.4f, 1.0f)]
+    public float collisionDamping = 0.8f;
 
+    public int numParticles = 1;
 
     private List<GameObject> particleList;
+
+    private Vector2 boundSize;
 
     // Start is called before the first frame update
     void Start()
     {
         particleList = new List<GameObject>();
+
+        boundSize = CalculateViewPortSize();
+        DrawBoundary();
     }
 
     // Update is called once per frame
     void Update()
+    {
+        UpdateParticleMovement();
+    }
+
+    Vector2 CalculateViewPortSize()
+    {
+        Camera cam = Camera.main;
+        float half_fov = cam.fieldOfView / 2.0f;
+        float zDis = Mathf.Abs(cam.transform.position.z);
+
+        // Calculate width and height of the view port size
+        int ViewPortHeight = (int)(zDis * Mathf.Tan(Mathf.Deg2Rad * half_fov) * 2);
+        int ViewPortWidth = ViewPortHeight * Screen.width / Screen.height;
+
+        return new Vector2(ViewPortWidth, ViewPortHeight);
+    }
+
+    void DrawBoundary()
+    {
+        if (boundSize == Vector2.zero || boundSize == null)
+        {
+            return;
+        }
+
+        if (boundingBoxRenderer == null)
+        {
+            return;
+        }
+
+        boundingBoxRenderer.positionCount = 5;
+
+        float bottomLeftCornerX = 0f - boundSize.x / 2;
+        float bottomLeftCornerY = 0f - boundSize.y / 2;
+
+        float[] xOffSet = { 0, boundSize.x, boundSize.x, 0, 0 };
+        float[] yOffSet = { 0, 0, boundSize.y, boundSize.y, 0 };
+        for (int i = 0; i < 5; i++)
+        {
+            Vector2 cornerPoint = new Vector2(bottomLeftCornerX + xOffSet[i], bottomLeftCornerY + yOffSet[i]);
+            boundingBoxRenderer.SetPosition(i, cornerPoint);
+        }
+    }
+
+    void UpdateParticleMovement()
     {
         // Delete all existing particles first
         foreach (Transform trans in transform)
@@ -87,5 +139,22 @@ public class FluidSimulation : MonoBehaviour
 
         // Add it into the list
         newObj.transform.SetParent(transform);
+    }
+
+    void ResolveCollisions(ref Vector2 position, ref Vector2 velocity)
+    {
+        Vector2 halfBoundSize = boundSize / 2 - Vector2.one * particleSize;
+
+        if (Mathf.Abs(position.x) > halfBoundSize.x)
+        {
+            position.x = halfBoundSize.x * Mathf.Sign(position.x);
+            velocity.x *= -1 * collisionDamping;
+        }
+
+        if (Mathf.Abs(position.y) > halfBoundSize.y)
+        {
+            position.y = halfBoundSize.y * Mathf.Sign(position.y);
+            velocity.y *= -1 * collisionDamping;
+        }
     }
 }

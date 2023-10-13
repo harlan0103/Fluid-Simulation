@@ -348,7 +348,7 @@ LineRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 0}
+  - {fileID: 2100000, guid: 1b8718601b175ec4f84b1e3f179910ca, type: 2}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -443,6 +443,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   mat: {fileID: 2100000, guid: 8a422b1d9ab26bb4aac2f4ea1415ca1c, type: 2}
   boundingBoxRenderer: {fileID: 1940915859}
+  particleSize: 0
 --- !u!4 &1940915861
 Transform:
   m_ObjectHideFlags: 0
