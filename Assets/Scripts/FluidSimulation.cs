@@ -55,16 +55,22 @@ public class FluidSimulation : MonoBehaviour
 
         // Random generate particles
         RandomCreateParticles(1024);
-        //UniformCreateParticles();
+
+        // Draw particles on screen
+        DrawParticles();
+
+        // Initialize spatial structure for quick look
+        InitializeSpatialStructure();
+        UpdateSpatialLookup(positions, smoothRadius);
 
         // Calculate the densities value for each particles
-        UpdateDensities();
+        //UpdateDensities();
     }
 
     // Update is called once per frame
     void Update()
     {
-        UpdateParticleMovement(Time.deltaTime);
+        //UpdateParticleMovement(Time.deltaTime);
     }
 
     Vector2 CalculateViewPortSize()
@@ -185,6 +191,28 @@ public class FluidSimulation : MonoBehaviour
         }
     }
 
+    void DrawParticles()
+    {
+        // Delete all existing particles first
+        if (particleList.Count != 0)
+        {
+            foreach (GameObject particle in particleList)
+            {
+                Destroy(particle);
+            }
+        }
+        
+        for (int i = 0; i < numParticles; i++)
+        {
+            DrawCircle(positions[i], particleSize, Colour.lightblue);
+        }
+
+        foreach (Transform trans in transform)
+        {
+            particleList.Add(trans.gameObject);
+        }
+    }
+
     void DrawCircle(Vector2 position, float radius, Color colour)
     {
         Vector3[] vertices = new Vector3[segments + 1];
@@ -223,14 +251,21 @@ public class FluidSimulation : MonoBehaviour
         mesh.uv = uvs;
         mesh.triangles = triangles;
 
-        mat.SetColor("_Color", colour);
+        // Assign material instance to each particle
+        Material newMat = new Material(mat);
+        newMat.SetColor("_Color", colour);
 
         // Create a new particle object
         GameObject newObj = new GameObject("particle");
         newObj.AddComponent<MeshFilter>();
         newObj.AddComponent<MeshRenderer>();
         newObj.GetComponent<MeshFilter>().mesh = mesh;
-        newObj.GetComponent<MeshRenderer>().material = mat;
+        newObj.GetComponent<MeshRenderer>().material = newMat;
+
+        // Add script and tag for debugging
+        newObj.AddComponent<ParticleAtt>();
+        newObj.layer = LayerMask.NameToLayer("Particles");
+        newObj.AddComponent<MeshCollider>();
 
         // Add it into the list
         newObj.transform.SetParent(transform);
@@ -251,6 +286,16 @@ public class FluidSimulation : MonoBehaviour
             position.y = halfBoundSize.y * Mathf.Sign(position.y);
             velocity.y *= -1 * collisionDamping;
         }
+    }
+
+    public List<GameObject> GetParticleList()
+    {
+        if (particleList != null)
+        {
+            return particleList;
+        }
+
+        return null;
     }
 
     // ==========================================
@@ -284,14 +329,38 @@ public class FluidSimulation : MonoBehaviour
 
         // Loop over all particle positions
         // TODO: optimize to only look at particles inside the smoothing radius
+        string s1 = "Sample point: " + samplePoint + "\n";
         foreach (Vector2 position in positions)
         {
             float dist = (position - samplePoint).magnitude;
             float influence = SmoothKernal(smoothRadius, dist);
-
+            if (influence != 0) 
+            { s1 += "Position: " + position + " influence: " + influence + "\n"; }
+         
             density += mass * influence;
         }
 
+        string s2 = "In spatial structure: =========\n";
+        float density2 = 0;
+        List<int> pointsIdx = ForeachPointWithinRadius(samplePoint);
+        foreach (int idx in pointsIdx)
+        {
+            float dist = (positions[idx] - samplePoint).magnitude;
+            float influence = SmoothKernal(smoothRadius, dist);
+            if (influence != 0)
+            { s2 += "Position: " + positions[idx] + " influence: " + influence + "\n"; }
+
+            density2 += mass * influence;
+        }
+
+        if (density - density2 > 0.00001f)
+        {
+            Debug.Log(s1);
+            Debug.Log(s2);
+            Debug.Log("Error: " + (density - density2));
+            Debug.Log("============================================================");
+        }
+        
         return density;
     }
 
@@ -367,10 +436,17 @@ public class FluidSimulation : MonoBehaviour
             densities = new float[numParticles];
         }
 
+        /*
         Parallel.For(0, numParticles, i =>
         {
             densities[i] = CalculateDensity(positions[i]);
         });
+        */
+
+        for (int i = 0; i < numParticles; i++)
+        {
+            densities[i] = CalculateDensity(positions[i]);
+        }
     }
 
     float ConvertDensityToPressure(float density)
@@ -452,34 +528,54 @@ public class FluidSimulation : MonoBehaviour
         // Use offset to find all 3x3 cell around the center cell
         cellOffsets = new Vector2[]
         {
-            new Vector2(0, 0),                                  // Current cell
-            new Vector2((int)smoothRadius, 0),                  // Left one
-            new Vector2(-(int)smoothRadius, 0),                 // Right one
-            new Vector2(0, (int)smoothRadius),                  // Top one
-            new Vector2(0, -(int)smoothRadius),                 // Bottom one
-            new Vector2((int)smoothRadius, (int)smoothRadius),  // Upper right one
-            new Vector2((int)smoothRadius, -(int)smoothRadius), // Bottom right one
-            new Vector2(-(int)smoothRadius, (int)smoothRadius), // Upper left one
-            new Vector2(-(int)smoothRadius, -(int)smoothRadius) // Bottom left one
+            new Vector2(0, 0),                  // Current cell
+            new Vector2(1, 0),                  // Right one
+            new Vector2(-1, 0),                 // Left one
+            new Vector2(0, 1),                  // Top one
+            new Vector2(0, -1),                 // Bottom one
+            new Vector2(1, 1),                  // Upper right one
+            new Vector2(1, -1),                 // Bottom right one
+            new Vector2(-1, 1),                 // Upper left one
+            new Vector2(-1, -1)                 // Bottom left one
         };
     }
 
     public void UpdateSpatialLookup(Vector2[] points, float radius)
     {
-        //this.points = points;
-        //this.radius = radius;
-
         // Create (unordered) saptial lookup
+        /*
         Parallel.For(0, points.Length, i =>
         {
             (int cellX, int cellY) = PositionToCellCoord(points[i], radius);
             uint cellKey = GetKeyFromHash(HashCell(cellX, cellY));
             spatialLookUp[i] = new Entry(i, cellKey);
             startIndices[i] = int.MaxValue;     // Reset start index
+
+            // Update particle information
+            GameObject particle = particleList[i];
+            particle.GetComponent<ParticleAtt>().UpdateParticleInfo(i, points[i], cellKey, cellX, cellY);
         });
+        */
+
+        // Change for debug
+        for (int i = 0; i < points.Length; i++)
+        {
+            (int cellX, int cellY) = PositionToCellCoord(points[i], radius);
+            uint cellKey = GetKeyFromHash(HashCell(cellX, cellY));
+            spatialLookUp[i] = new Entry(i, cellKey);
+            startIndices[i] = int.MaxValue;     // Reset start index
+
+            // Update particle information
+            GameObject particle = particleList[i];
+            particle.GetComponent<ParticleAtt>().UpdateParticleInfo(i, points[i], cellKey, cellX, cellY);
+        }
 
         // Sort by cell key
         Array.Sort(spatialLookUp);
+
+        // Set the first key start position
+        uint firstKey = spatialLookUp[0].hashKey;
+        startIndices[firstKey] = 0;
 
         // Calculate start indices of each unique cell key in the spatial lookup
         Parallel.For(0, points.Length, i =>
@@ -498,8 +594,9 @@ public class FluidSimulation : MonoBehaviour
     // The return value is the index of given point in the specific grid
     public (int x, int y) PositionToCellCoord(Vector2 point, float radius)
     {
-        int cellX = (int)(point.x / radius);
-        int cellY = (int)(point.y / radius);
+        int cellX = (int)((point.x - (0 - boundSize.x / 2)) / radius);
+        int cellY = (int)((point.y - (0 - boundSize.y / 2)) / radius);
+
         return (cellX, cellY);
     }
 
@@ -544,16 +641,13 @@ public class FluidSimulation : MonoBehaviour
 
                 int particleIndex = spatialLookUp[i].index;
 
-                // Skip the same one
-                if (positions[particleIndex] == samplePoint) continue;
-
                 float sqrDst = (positions[particleIndex] - samplePoint).sqrMagnitude;
-                float sqrRadius = Mathf.Sqrt(smoothRadius);
+                float sqrRadius = smoothRadius * smoothRadius;
 
                 // Test if the point is inside the radius
                 if (sqrDst <= sqrRadius)
                 {
-                    // Do something with the particleIndex
+                    // Add valid particle index into the list
                     validPointsInsideRadius.Add(particleIndex);
                 }
             }

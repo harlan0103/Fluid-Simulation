@@ -18,6 +18,15 @@ public class Colour
             return new Color(0.56f, 0.93f, 0.56f, 1.0f);
         }
     }
+
+    // #CBC3E3
+    public static Color lightpurple
+    {
+        get
+        {
+            return new Color(0.8f, 0.76f, 0.89f, 1.0f);
+        }
+    }
 }
 
 public class Entry : IComparable
