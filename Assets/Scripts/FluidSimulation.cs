@@ -1,7 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
+using UnityEditor.PackageManager.UI;
 using UnityEngine;
+using UnityEngine.UIElements;
+using static UnityEngine.EventSystems.EventTrigger;
 
 public class FluidSimulation : MonoBehaviour
 {
@@ -34,6 +38,11 @@ public class FluidSimulation : MonoBehaviour
     private Vector2[] velocities;
     private float[] particleProperties;
     private float[] densities;
+
+    // Spatial grid structure
+    private Entry[] spatialLookUp;
+    private int[] startIndices;
+    private Vector2[] cellOffsets;
 
     // Start is called before the first frame update
     void Start()
@@ -399,5 +408,157 @@ public class FluidSimulation : MonoBehaviour
         float pressureB = ConvertDensityToPressure(density2);
 
         return (pressureA + pressureB) / 2;
+    }
+
+    // ==========================================
+    //
+    // Spatial grid structure
+    // 
+    // Spatial key lookup logics to speedup the process finding particles have impact to the sample point
+    // Consider there are 10 particles in the scene
+    // [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    // For point 0
+    // Point index is: 0
+    // Cell coord is: (2, 0) based on point (x,y) and smoothRadius
+    // Cell hash is 6613 with the cell key is 3
+    // We do the same approach to all points
+    // So that in the spatialLookup array, it becomes
+    // [3, 6, 2, 9, 9, 2, 6, 2, 9, 9]
+    // Based on that we call tell that having the same hash key values meaning those points are in the same cell grid
+    // Then we can sort the SpatialLookup array to have points having same hash key group together
+    // points index:    [2, 5, 7, 0, 1, 6, 3, 4, 8, 9]
+    // points hashkey:  [2, 2, 2, 3, 6, 6, 9, 9, 9, 9]
+    // Then based on the hashkey array we have, we can then generate a start index array for each hash key
+    // Start index:     [-, -, 0, 3, -, -, 4, -, -, 6]
+    // Start index array provide a way to look up all points in the same grid
+    // For example, we calculate the hashkey for current grid is 9
+    // Then startIndicies[9] = 6, meaning that all points with hashKey 9 start from lookup array index 6
+    // So we have points [3, 4, 8, 9] are all in the same grid with hashkey 9
+    // 
+    // Then for each sample point, we can first locate which grid it is inside
+    // Then we calculate the total 9 cells around and including the center cell
+    // For each cell calculate the hashkey
+    // Then use startIndices array to find all points that inside of the cell
+    // For each point that reside inside of the 3x3 grid
+    // We then check if it is also inside of the smoothcircle of the sample point
+    // If inside, we then will update the properties of each point
+    // ==========================================
+
+    void InitializeSpatialStructure()
+    {
+        spatialLookUp = new Entry[numParticles];
+        startIndices = new int[numParticles];
+
+        // Use offset to find all 3x3 cell around the center cell
+        cellOffsets = new Vector2[]
+        {
+            new Vector2(0, 0),                                  // Current cell
+            new Vector2((int)smoothRadius, 0),                  // Left one
+            new Vector2(-(int)smoothRadius, 0),                 // Right one
+            new Vector2(0, (int)smoothRadius),                  // Top one
+            new Vector2(0, -(int)smoothRadius),                 // Bottom one
+            new Vector2((int)smoothRadius, (int)smoothRadius),  // Upper right one
+            new Vector2((int)smoothRadius, -(int)smoothRadius), // Bottom right one
+            new Vector2(-(int)smoothRadius, (int)smoothRadius), // Upper left one
+            new Vector2(-(int)smoothRadius, -(int)smoothRadius) // Bottom left one
+        };
+    }
+
+    public void UpdateSpatialLookup(Vector2[] points, float radius)
+    {
+        //this.points = points;
+        //this.radius = radius;
+
+        // Create (unordered) saptial lookup
+        Parallel.For(0, points.Length, i =>
+        {
+            (int cellX, int cellY) = PositionToCellCoord(points[i], radius);
+            uint cellKey = GetKeyFromHash(HashCell(cellX, cellY));
+            spatialLookUp[i] = new Entry(i, cellKey);
+            startIndices[i] = int.MaxValue;     // Reset start index
+        });
+
+        // Sort by cell key
+        Array.Sort(spatialLookUp);
+
+        // Calculate start indices of each unique cell key in the spatial lookup
+        Parallel.For(0, points.Length, i =>
+        {
+            uint key = spatialLookUp[i].hashKey;
+            uint keyPrev = i == 0 ? uint.MinValue : spatialLookUp[i - 1].hashKey;
+            if (key != keyPrev)
+            {
+                startIndices[key] = i;
+            }
+        });
+    }
+
+    // Convert a position to the coordinate of the cell it is within
+    // Radius is the smoothRadius, which is the size of the grid
+    // The return value is the index of given point in the specific grid
+    public (int x, int y) PositionToCellCoord(Vector2 point, float radius)
+    {
+        int cellX = (int)(point.x / radius);
+        int cellY = (int)(point.y / radius);
+        return (cellX, cellY);
+    }
+
+    // Convert a cell coordinate into a single number
+    // Hash collisions are unavoidable, but we want to at least
+    // try to minimize collisions for nearby cells.
+    public uint HashCell(int cellX, int cellY)
+    {
+        uint a = (uint)cellX * 15823;
+        uint b = (uint)cellY * 9737333;
+
+        return a + b;
+    }
+
+    // Wrap the hash value around the length of the array
+    public uint GetKeyFromHash(uint hash)
+    {
+        return hash % (uint)spatialLookUp.Length;
+    }
+
+    public List<int> ForeachPointWithinRadius(Vector2 samplePoint)
+    {
+        List<int> validPointsInsideRadius = new List<int>();
+
+        // Find which cell the sample point is in (this will be the centre of the 3x3 grid)
+        (int centreX, int centreY) = PositionToCellCoord(samplePoint, smoothRadius);
+
+        // Loop over all cells of the 3x3 block around the centre cell
+        foreach (Vector2 offset in cellOffsets)
+        {
+            int offsetX = (int)offset.x;
+            int offsetY = (int)offset.y;
+
+            // Get the key of current cell, then loop over all points that share that key
+            uint key = GetKeyFromHash(HashCell(centreX + offsetX, centreY + offsetY));
+            int cellStartIndex = startIndices[key];
+
+            for (int i = cellStartIndex; i < spatialLookUp.Length; i++)
+            {
+                // Exit loop if we're no longer looking at the correct cell
+                if (spatialLookUp[i].hashKey != key) break;
+
+                int particleIndex = spatialLookUp[i].index;
+
+                // Skip the same one
+                if (positions[particleIndex] == samplePoint) continue;
+
+                float sqrDst = (positions[particleIndex] - samplePoint).sqrMagnitude;
+                float sqrRadius = Mathf.Sqrt(smoothRadius);
+
+                // Test if the point is inside the radius
+                if (sqrDst <= sqrRadius)
+                {
+                    // Do something with the particleIndex
+                    validPointsInsideRadius.Add(particleIndex);
+                }
+            }
+        }
+
+        return validPointsInsideRadius;
     }
 }
