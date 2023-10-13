@@ -443,9 +443,11 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   mat: {fileID: 2100000, guid: 8a422b1d9ab26bb4aac2f4ea1415ca1c, type: 2}
   boundingBoxRenderer: {fileID: 1940915859}
-  numParticles: 10
+  numParticles: 81
   particleSize: 0.1
+  gravity: 0
   collisionDamping: 0.8
+  particleSpacing: 0.1
 --- !u!4 &1940915861
 Transform:
   m_ObjectHideFlags: 0

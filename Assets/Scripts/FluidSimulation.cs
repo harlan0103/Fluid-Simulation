@@ -18,6 +18,8 @@ public class FluidSimulation : MonoBehaviour
     public int gravity = 5;
     [Range(0.4f, 1.0f)]
     public float collisionDamping = 0.8f;
+    [Range(0.0f, 3.0f)]
+    public float particleSpacing = 1.0f;
 
     private List<GameObject> particleList;
 
@@ -35,8 +37,9 @@ public class FluidSimulation : MonoBehaviour
         boundSize = CalculateViewPortSize();
         DrawBoundary();
 
-        // Randomly create particles
-        RandomCreateParticles(1024);
+        // Uniform generate particles
+        //RandomCreateParticles(1024);
+        UniformCreateParticles();
 
         // Draw particles on the screen
         UpdateParticleMovement();
@@ -99,6 +102,26 @@ public class FluidSimulation : MonoBehaviour
             float x = (float)(rng.NextDouble() - 0.5) * boundSize.x;
             float y = (float)(rng.NextDouble() - 0.5) * boundSize.y;
 
+            positions[i] = new Vector2(x, y);
+        }
+    }
+
+    void UniformCreateParticles()
+    {
+        // Create particle arrays
+        positions = new Vector2[numParticles];
+        velocities = new Vector2[numParticles];
+        particleProperties = new float[numParticles];
+
+        // Place particles in a grid formation
+        int particlesPerRow = (int)Mathf.Sqrt(numParticles);
+        int particlesPerCol = (numParticles - 1) / particlesPerRow + 1;
+        float spacing = particleSize * 2 + particleSpacing;
+
+        for (int i = 0; i < numParticles; i++)
+        {
+            float x = (i % particlesPerRow - particlesPerRow / 2f + 0.5f) * spacing;
+            float y = (i / particlesPerRow - particlesPerCol / 2f + 0.5f) * spacing;
             positions[i] = new Vector2(x, y);
         }
     }
