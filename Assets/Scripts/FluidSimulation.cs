@@ -1,8 +1,7 @@
 using System;
-using System.Collections;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using UnityEngine;
-using UnityEngine.UIElements;
 
 public class FluidSimulation : MonoBehaviour
 {
@@ -21,12 +20,20 @@ public class FluidSimulation : MonoBehaviour
     [Range(0.0f, 3.0f)]
     public float particleSpacing = 1.0f;
 
+    [Header("Particle Properties")]
+    public float smoothRadius = 1.0f;
+    public float mass = 1.0f;
+    public float targetDensity = 0.5f;
+    public float pressureMultiplier = 9.0f;
+
+    // private groups
     private List<GameObject> particleList;
 
     private Vector2 boundSize;
     private Vector2[] positions;
     private Vector2[] velocities;
     private float[] particleProperties;
+    private float[] densities;
 
     // Start is called before the first frame update
     void Start()
@@ -37,18 +44,18 @@ public class FluidSimulation : MonoBehaviour
         boundSize = CalculateViewPortSize();
         DrawBoundary();
 
-        // Uniform generate particles
-        //RandomCreateParticles(1024);
-        UniformCreateParticles();
+        // Random generate particles
+        RandomCreateParticles(1024);
+        //UniformCreateParticles();
 
-        // Draw particles on the screen
-        UpdateParticleMovement();
+        // Calculate the densities value for each particles
+        UpdateDensities();
     }
 
     // Update is called once per frame
     void Update()
     {
-        UpdateParticleMovement();
+        UpdateParticleMovement(Time.deltaTime);
     }
 
     Vector2 CalculateViewPortSize()
@@ -126,7 +133,7 @@ public class FluidSimulation : MonoBehaviour
         }
     }
 
-    void UpdateParticleMovement()
+    void UpdateParticleMovement(float deltaTime)
     {
         // Delete all existing particles first
         foreach (Transform trans in transform)
@@ -138,14 +145,32 @@ public class FluidSimulation : MonoBehaviour
             Destroy(particle);
         }
 
-        for (int i = 0; i < positions.Length; i++)
+        // Calculate and apply pressure force
+        Parallel.For(0, numParticles, i =>
         {
-            ResolveCollisions(ref positions[i], ref velocities[i]);
-            velocities[i] += Vector2.down * gravity * Time.deltaTime;
-            positions[i] += velocities[i] * Time.deltaTime;
-        }
+            Vector2 pressureForce = CalculatePressureForce(i);
+            Vector2 pressureAcceleration = Vector2.zero;
 
-        for (int i = 0; i < positions.Length; i++)
+            pressureAcceleration = pressureForce / densities[i];
+
+            velocities[i] = pressureAcceleration * deltaTime;
+        });
+
+        // Apply gravity and calculate densities
+        Parallel.For(0, numParticles, i =>
+        {
+            velocities[i] += Vector2.down * gravity * deltaTime;
+            densities[i] = CalculateDensity(positions[i]);
+        });
+
+        // Update positions and resolve collisions
+        Parallel.For(0, numParticles, i =>
+        {
+            positions[i] += velocities[i] * deltaTime;
+            ResolveCollisions(ref positions[i], ref velocities[i]);
+        });
+
+        for (int i = 0; i < numParticles; i++)
         {
             DrawCircle(positions[i], particleSize, Colour.lightblue);
         }
@@ -217,5 +242,162 @@ public class FluidSimulation : MonoBehaviour
             position.y = halfBoundSize.y * Mathf.Sign(position.y);
             velocity.y *= -1 * collisionDamping;
         }
+    }
+
+    // ==========================================
+    //
+    // Property Calculation for each particles
+    // 
+    // ==========================================
+    static float SmoothKernal(float radius, float dist)
+    {
+        if (dist >= radius)
+        {
+            return 0;
+        }
+
+        float volume = (Mathf.PI * Mathf.Pow(radius, 4) / 6);
+        return (radius - dist) * (radius - dist) / volume;
+    }
+
+    static float SmoothKernalDerivative(float dst, float radius)
+    {
+        if (dst >= radius) return 0;
+
+        float scale = 12 / (Mathf.Pow(radius, 4) * Mathf.PI);
+        return (dst - radius) * scale;
+    }
+
+    float CalculateDensity(Vector2 samplePoint)
+    {
+        float density = 0;
+        const float mass = 1;
+
+        // Loop over all particle positions
+        // TODO: optimize to only look at particles inside the smoothing radius
+        foreach (Vector2 position in positions)
+        {
+            float dist = (position - samplePoint).magnitude;
+            float influence = SmoothKernal(smoothRadius, dist);
+
+            density += mass * influence;
+        }
+
+        return density;
+    }
+
+    float CalculateProperty(Vector2 samplePoint)
+    {
+        float property = 0;
+
+        for (int i = 0; i < numParticles; i++)
+        {
+            float dist = (positions[i] - samplePoint).magnitude;
+            float influence = SmoothKernal(smoothRadius, dist);
+            float density = CalculateDensity(positions[i]);
+
+            property += particleProperties[i] * influence * mass / density;
+        }
+
+        return property;
+    }
+
+    // Finite difference method
+    Vector2 CalculatePropertyGradient(Vector2 samplePoint)
+    {
+        const float stepSize = 0.001f;
+        float deltaX = CalculateProperty(samplePoint + Vector2.right * stepSize) - CalculateProperty(samplePoint);
+        float deltaY = CalculateProperty(samplePoint + Vector2.up * stepSize) - CalculateProperty(samplePoint);
+
+        Vector2 gradient = new Vector2(deltaX, deltaY);
+        return gradient;
+    }
+
+    // SPH Gradient method
+    Vector2 CalculatePropertyGradientUsingSlope(Vector2 samplePoint)
+    {
+        Vector2 propertyGradient = Vector2.zero;
+        float mass = 1.5f;
+
+        for (int i = 0; i < numParticles; i++)
+        {
+            float dst = (positions[i] - samplePoint).magnitude;
+            Vector2 dir = (positions[i] - samplePoint) / dst;
+
+            float slope = SmoothKernalDerivative(dst, smoothRadius);
+            float density = CalculateDensity(positions[i]);
+            propertyGradient += -particleProperties[i] * dir * slope * mass / density;
+        }
+
+        return propertyGradient;
+    }
+
+    // Cached densities
+    Vector2 CalculatePropertyGradientParalleled(Vector2 samplePoint)
+    {
+        Vector2 propertyGradient = Vector2.zero;
+        int mass = 1;
+
+        for (int i = 0; i < numParticles; i++)
+        {
+            float dst = (positions[i] - samplePoint).magnitude;
+            Vector2 dir = (positions[i] - samplePoint) / dst;
+
+            float slope = SmoothKernalDerivative(dst, smoothRadius);
+            float density = densities[i];
+            propertyGradient += -particleProperties[i] * dir * slope * mass / density;
+        }
+
+        return propertyGradient;
+    }
+
+    void UpdateDensities()
+    {
+        if (densities == null)
+        {
+            densities = new float[numParticles];
+        }
+
+        Parallel.For(0, numParticles, i =>
+        {
+            densities[i] = CalculateDensity(positions[i]);
+        });
+    }
+
+    float ConvertDensityToPressure(float density)
+    {
+        float densityError = density - targetDensity;
+        float pressure = densityError * pressureMultiplier;
+        return pressure;
+    }
+
+    Vector2 CalculatePressureForce(int particleIdx)
+    {
+        Vector2 pressureForce = Vector2.zero;
+
+        for (int otherParticleIndex = 0; otherParticleIndex < numParticles; otherParticleIndex++)
+        {
+            if (particleIdx == otherParticleIndex) continue;
+
+            Vector2 offset = positions[otherParticleIndex] - positions[particleIdx];
+            float dst = offset.magnitude;
+            Vector2 dir = dst == 0 ? offset / 0.01f : offset / dst;
+            float slope = SmoothKernalDerivative(dst, smoothRadius);
+            float density = densities[otherParticleIndex];
+
+            float sharedPressure = CalculateSharedPressure(density, densities[particleIdx]);
+            //pressureForce += ConvertDensityToPressure(density) * dir * slope * mass / density;
+            pressureForce += sharedPressure * dir * slope * mass / density;
+        }
+
+        return pressureForce;
+    }
+
+    float CalculateSharedPressure(float density, float density2)
+    {
+        float pressureA = ConvertDensityToPressure(density);
+        float pressureB = ConvertDensityToPressure(density2);
+
+        return (pressureA + pressureB) / 2;
     }
 }
