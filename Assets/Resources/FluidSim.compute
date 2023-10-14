@@ -1,0 +1,24 @@
+// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel UpdatePositions      // 0
+
+// Create a RenderTexture with enableRandomWrite flag and set it
+// Buffers
+RWStructuredBuffer<float2> Positions;
+RWStructuredBuffer<float2> Velocities;
+
+// Attributes
+uint numParticles;
+float deltaTime;
+
+// Kernals
+[numthreads(8,1,1)]
+void UpdatePositions (uint3 id : SV_DispatchThreadID)
+{
+    // Update positions
+    if (id.x >= numParticles)
+    {
+        return;
+    }
+    
+    Positions[id.x] += Velocities[id.x] * deltaTime;
+}

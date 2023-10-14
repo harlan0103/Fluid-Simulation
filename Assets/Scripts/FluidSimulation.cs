@@ -16,11 +16,13 @@ public class FluidSimulation : MonoBehaviour
 
     [Range(0.05f, 5.0f)]
     public float particleSize = 0.1f;
-    public int gravity = 5;
+    public float gravity = 5;
     [Range(0.4f, 1.0f)]
     public float collisionDamping = 0.8f;
     [Range(0.0f, 3.0f)]
     public float particleSpacing = 1.0f;
+
+    public float deltaTime = 0.00001f;
 
     [Header("Particle Properties")]
     public float smoothRadius = 1.0f;
@@ -33,18 +35,37 @@ public class FluidSimulation : MonoBehaviour
 
     private Vector2 boundSize;
     private Vector2[] positions;
+    private Vector2[] predictPositions;
     private Vector2[] velocities;
     private float[] densities;
+
+    private System.Random random = new System.Random();
 
     // Spatial grid structure
     private Entry[] spatialLookUp;
     private int[] startIndices;
     private Vector2[] cellOffsets;
 
+    // Compute buffers
+    public Shader shader;
+    public Mesh mesh;
+
+    private Material grassMaterial;
+    private ComputeBuffer positionsBuffer;
+    private ComputeBuffer velocitiesBuffer;
+    private ComputeBuffer argsBuffer;           // dispatch argument
+
+    // Compute shader
+    private ComputeShader computeShader;
+
+    private uint[] args = new uint[5] { 0, 0, 0, 0, 0 };
+    private int instanceCount;
+    private const int subMeshIndex = 0;
+
     // Start is called before the first frame update
     void Start()
     {
-        particleList = new List<GameObject>();
+        //particleList = new List<GameObject>();
 
         // Initialize 
         boundSize = CalculateViewPortSize();
@@ -59,22 +80,86 @@ public class FluidSimulation : MonoBehaviour
         {
             UniformCreateParticles();
         }
-        
+
         // Draw particles on screen
-        DrawParticles();
+        //DrawParticles();
 
         // Initialize spatial structure for quick look
-        InitializeSpatialStructure();
-        UpdateSpatialLookup(positions, smoothRadius);
+        //InitializeSpatialStructure();
+        //UpdateSpatialLookup(positions, smoothRadius);
 
         // Calculate the densities value for each particles
-        UpdateDensities();
+        //UpdateDensities();
+
+        // Initialize compute shader
+        InitializeComputeShader();
     }
 
     // Update is called once per frame
     void Update()
     {
-        UpdateParticleMovement(Time.deltaTime);
+        //UpdateParticleMovement(deltaTime);
+    }
+
+    private void LateUpdate()
+    {
+        grassMaterial.SetFloat("_Scale", particleSize);
+        Graphics.DrawMeshInstancedIndirect(mesh, subMeshIndex, grassMaterial, new Bounds(Vector3.zero, new Vector3(100.0f, 100.0f, 100.0f)), argsBuffer);
+    }
+
+    void InitializeComputeShader()
+    {
+        instanceCount = numParticles;
+        argsBuffer = new ComputeBuffer(1, args.Length * sizeof(uint), ComputeBufferType.IndirectArguments);
+
+        // Compute Shader
+        computeShader = Resources.Load<ComputeShader>("FluidSim");
+
+        // Create compute buffers
+        positionsBuffer = new ComputeBuffer(numParticles, sizeof(float) * 2);
+        velocitiesBuffer = new ComputeBuffer(numParticles, sizeof(float) * 2);
+
+        // Set compute buffers data
+        positionsBuffer.SetData(positions);
+        velocitiesBuffer.SetData(velocities);
+
+        // Set buffers to compute shader
+        computeShader.SetInt("numParticles", numParticles);
+        computeShader.SetFloat("deltaTime", Time.deltaTime);
+        computeShader.SetBuffer(0, "Positions", positionsBuffer);
+        computeShader.SetBuffer(0, "Velocities", velocitiesBuffer);
+
+        // Dispatch compute shader
+        computeShader.Dispatch(0, Mathf.CeilToInt(numParticles / 8), 1, 1);
+
+        // Create a new material for shader
+        grassMaterial = new Material(shader);
+        
+        // Set attributes
+        grassMaterial.SetBuffer("_Positions", positionsBuffer);
+        grassMaterial.SetFloat("_Scale", particleSize);
+        grassMaterial.SetColor("_Color", Colour.lightblue);
+
+        // Update buffer
+        UpdateBuffers();
+    }
+
+    // https://docs.unity3d.com/ScriptReference/Graphics.DrawMeshInstancedIndirect.html
+    void UpdateBuffers()
+    {
+        // Indirect args
+        if (mesh != null)
+        {
+            args[0] = (uint)mesh.GetIndexCount(subMeshIndex);
+            args[1] = (uint)instanceCount;
+            args[2] = (uint)mesh.GetIndexStart(subMeshIndex);
+            args[3] = (uint)mesh.GetBaseVertex(subMeshIndex);
+        }
+        else
+        {
+            args[0] = args[1] = args[2] = args[3] = 0;
+        }
+        argsBuffer.SetData(args);
     }
 
     Vector2 CalculateViewPortSize()
@@ -120,6 +205,7 @@ public class FluidSimulation : MonoBehaviour
     {
         System.Random rng = new(seed);
         positions = new Vector2[numParticles];
+        predictPositions = new Vector2[numParticles];
         velocities = new Vector2[numParticles];
 
         for (int i = 0; i < positions.Length; i++)
@@ -135,12 +221,13 @@ public class FluidSimulation : MonoBehaviour
     {
         // Create particle arrays
         positions = new Vector2[numParticles];
+        predictPositions = new Vector2[numParticles];
         velocities = new Vector2[numParticles];
 
         // Place particles in a grid formation
         int particlesPerRow = (int)Mathf.Sqrt(numParticles);
         int particlesPerCol = (numParticles - 1) / particlesPerRow + 1;
-        float spacing = particleSize * 2 + particleSpacing;
+        float spacing = particleSize * 2;
 
         for (int i = 0; i < numParticles; i++)
         {
@@ -152,21 +239,20 @@ public class FluidSimulation : MonoBehaviour
 
     void UpdateParticleMovement(float deltaTime)
     {
-        // Delete all existing particles first
-        foreach (Transform trans in transform)
-        {
-            particleList.Add(trans.gameObject);
-        }
-        foreach (GameObject particle in particleList)
-        {
-            Destroy(particle);
-        }
-
-        // Apply gravity and calculate densities
+        // Apply gravity and predict next position
         Parallel.For(0, numParticles, i =>
         {
             velocities[i] += Vector2.down * gravity * deltaTime;
-            densities[i] = CalculateDensity(positions[i]);
+            predictPositions[i] = positions[i] + velocities[i] * 1 / 120;
+        });
+
+        // Update spatial lookup with predicted position
+        UpdateSpatialLookup(predictPositions, smoothRadius);
+
+        // Calculate densities
+        Parallel.For(0, numParticles, i =>
+        {
+            densities[i] = CalculateDensity(predictPositions[i]);
         });
 
         // Calculate and apply pressure force
@@ -184,13 +270,20 @@ public class FluidSimulation : MonoBehaviour
             ResolveCollisions(ref positions[i], ref velocities[i]);
         });
 
+        // Delete all existing particles first
+        foreach (Transform trans in transform)
+        {
+            particleList.Add(trans.gameObject);
+        }
+        foreach (GameObject particle in particleList)
+        {
+            Destroy(particle);
+        }
+
         for (int i = 0; i < numParticles; i++)
         {
             DrawCircle(positions[i], particleSize, Colour.lightblue);
         }
-
-        // Update spatial structure information
-        UpdateSpatialLookup(positions, smoothRadius);
     }
 
     void DrawParticles()
@@ -300,20 +393,34 @@ public class FluidSimulation : MonoBehaviour
         return null;
     }
 
+    // Function to generate a random 2D vector direction
+    public Vector2 Random2DVectorDirection()
+    {
+        // Generate a random angle in radians
+        float angleRadians = (float)random.NextDouble() * 2 * Mathf.PI;
+
+        // Calculate the x and y components of the 2D vector
+        float x = Mathf.Cos(angleRadians);
+        float y = Mathf.Sin(angleRadians);
+
+        // Return the 2D vector as a Vector2
+        return new Vector2(x, y);
+    }
+
     // ==========================================
     //
     // Property Calculation for each particles
     // 
     // ==========================================
-    static float SmoothKernal(float radius, float dist)
+    static float SmoothKernal(float dst, float radius)
     {
-        if (dist >= radius)
+        if (dst >= radius)
         {
             return 0;
         }
 
-        float volume = (Mathf.PI * Mathf.Pow(radius, 4) / 6);
-        return (radius - dist) * (radius - dist) / volume;
+        float volume = (Mathf.PI * Mathf.Pow(radius, 4)) / 6;
+        return (radius - dst) * (radius - dst) / volume;
     }
 
     static float SmoothKernalDerivative(float dst, float radius)
@@ -350,7 +457,7 @@ public class FluidSimulation : MonoBehaviour
         foreach (int idx in pointsIdx)
         {
             float dist = (positions[idx] - samplePoint).magnitude;
-            float influence = SmoothKernal(smoothRadius, dist);
+            float influence = SmoothKernal(dist, smoothRadius);
 
             density += mass * influence;
         }
@@ -559,5 +666,27 @@ public class FluidSimulation : MonoBehaviour
             (int cellX, int cellY) = PositionToCellCoord(positions[i], smoothRadius);
             particle.GetComponent<ParticleAtt>().UpdateParticleInfo(i, positions[i], particleEntry.hashKey, cellX, cellY);
         }
+    }
+
+    private void OnDestroy()
+    {
+        // Release all buffers
+        if (positionsBuffer != null)
+        {
+            positionsBuffer.Release();
+        }
+        positionsBuffer = null;
+
+        if (velocitiesBuffer != null)
+        {
+            velocitiesBuffer.Release();
+        }
+        velocitiesBuffer = null;
+
+        if (argsBuffer != null)
+        {
+            argsBuffer.Release();
+        }
+        argsBuffer = null;
     }
 }

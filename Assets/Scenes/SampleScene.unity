@@ -485,7 +485,7 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 963194225}
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: -20}
+  m_LocalPosition: {x: 0, y: 0, z: -30}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -773,16 +773,18 @@ MonoBehaviour:
   mat: {fileID: 2100000, guid: 8a422b1d9ab26bb4aac2f4ea1415ca1c, type: 2}
   boundingBoxRenderer: {fileID: 1940915859}
   pattern: 1
-  numParticles: 500
-  particleSize: 0.1
+  numParticles: 4000
+  particleSize: 0.25
   gravity: 0
-  collisionDamping: 1
-  particleSpacing: 0.1
-  smoothRadius: 3
+  collisionDamping: 0.964
+  particleSpacing: 0
+  deltaTime: 1
+  smoothRadius: 2
   mass: 1
-  targetDensity: 0.3
-  pressureMultiplier: 50
-  velocities: []
+  targetDensity: 0.5
+  pressureMultiplier: 0.001
+  shader: {fileID: 4800000, guid: 425f9691f9cfbfe4f8c993917068c720, type: 3}
+  mesh: {fileID: 10210, guid: 0000000000000000e000000000000000, type: 0}
 --- !u!4 &1940915861
 Transform:
   m_ObjectHideFlags: 0
