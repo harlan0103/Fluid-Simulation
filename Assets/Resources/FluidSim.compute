@@ -1,5 +1,6 @@
 // Each #kernel tells which function to compile; you can have many kernels
 #pragma kernel UpdatePositions      // 0
+#pragma kernel UpdateVelocities     // 1
 
 // Create a RenderTexture with enableRandomWrite flag and set it
 // Buffers
@@ -9,6 +10,34 @@ RWStructuredBuffer<float2> Velocities;
 // Attributes
 uint numParticles;
 float deltaTime;
+float2 boundSize;       // bounding box size
+float collisionDamping;
+float gravity;
+
+void ResolveCollisions(uint particleIdx)
+{
+    float2 position = Positions[particleIdx];
+    float2 velocity = Velocities[particleIdx];
+    
+    // Keep particle inside bounds
+	float2 halfSize = boundSize * 0.5;
+	float2 distanceToEdge = halfSize - abs(position);
+
+    if (distanceToEdge.x <= 0)
+	{
+        position.x = halfSize.x * sign(position.x);
+        velocity.x *= -1 * collisionDamping;
+    }
+    if (distanceToEdge.y <= 0)
+	{
+        position.y = halfSize.y * sign(position.y);
+        velocity.y *= -1 * collisionDamping;
+    }
+    
+    // Update position and velocity
+    Positions[particleIdx] = position;
+    Velocities[particleIdx] = velocity;
+}
 
 // Kernals
 [numthreads(8,1,1)]
@@ -21,4 +50,18 @@ void UpdatePositions (uint3 id : SV_DispatchThreadID)
     }
     
     Positions[id.x] += Velocities[id.x] * deltaTime;
+    ResolveCollisions(id.x);
+}
+
+[numthreads(8,1,1)]
+void UpdateVelocities (uint3 id : SV_DispatchThreadID)
+{
+    float2 gravityForce = float2(0, -gravity);
+    // Update velocities
+    if (id.x >= numParticles)
+    {
+        return;
+    }
+    
+    Velocities[id.x] += gravityForce * collisionDamping * deltaTime;
 }

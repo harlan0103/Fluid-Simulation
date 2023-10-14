@@ -99,6 +99,14 @@ public class FluidSimulation : MonoBehaviour
     void Update()
     {
         //UpdateParticleMovement(deltaTime);
+        computeShader.SetInt("numParticles", numParticles);
+        computeShader.SetFloat("deltaTime", Time.deltaTime);
+        computeShader.SetVector("boundSize", boundSize);
+        computeShader.SetFloat("collisionDamping", collisionDamping);
+        computeShader.SetFloat("gravity", gravity);
+
+        computeShader.Dispatch(1, Mathf.CeilToInt(numParticles / 8), 1, 1);
+        computeShader.Dispatch(0, Mathf.CeilToInt(numParticles / 8), 1, 1);
     }
 
     private void LateUpdate()
@@ -123,13 +131,20 @@ public class FluidSimulation : MonoBehaviour
         positionsBuffer.SetData(positions);
         velocitiesBuffer.SetData(velocities);
 
-        // Set buffers to compute shader
+        // Set variables
         computeShader.SetInt("numParticles", numParticles);
         computeShader.SetFloat("deltaTime", Time.deltaTime);
+        computeShader.SetVector("boundSize", boundSize);
+        computeShader.SetFloat("collisionDamping", collisionDamping);
+        computeShader.SetFloat("gravity", gravity);
+
+        // Set buffers
         computeShader.SetBuffer(0, "Positions", positionsBuffer);
         computeShader.SetBuffer(0, "Velocities", velocitiesBuffer);
+        computeShader.SetBuffer(1, "Velocities", velocitiesBuffer);
 
-        // Dispatch compute shader
+        // Dispatch kernal
+        computeShader.Dispatch(1, Mathf.CeilToInt(numParticles / 8), 1, 1);
         computeShader.Dispatch(0, Mathf.CeilToInt(numParticles / 8), 1, 1);
 
         // Create a new material for shader
