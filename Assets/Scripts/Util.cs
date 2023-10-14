@@ -31,8 +31,8 @@ public class Colour
 
 public class Entry : IComparable
 {
-    public int index;       // the index in the points array
-    public uint hashKey;    // the hashkey of the given points
+    public int index;                   // the index in the points array
+    public uint hashKey;                // the hashkey of the given points
 
     public Entry(int _index, uint _hashKey)
     {
@@ -46,4 +46,10 @@ public class Entry : IComparable
         Entry entry = obj as Entry;
         return this.hashKey.CompareTo(entry.hashKey);
     }
+}
+
+public enum ParticlePattern
+{ 
+    Random,
+    Uniform
 }

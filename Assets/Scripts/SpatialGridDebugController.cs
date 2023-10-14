@@ -33,6 +33,10 @@ public class SpatialGridDebugController : MonoBehaviour
 
         infoPanel.SetActive(false);
 
+        // Update particle information
+        gameObject.GetComponent<FluidSimulation>().UpdateParticleInfomation();
+
+        // Set particle color to default
         List<GameObject> particleList = gameObject.GetComponent<FluidSimulation>().GetParticleList();
         foreach (GameObject particle in particleList) 
         {
@@ -51,6 +55,7 @@ public class SpatialGridDebugController : MonoBehaviour
         Ray ray = Camera.main.ScreenPointToRay(Input.mousePosition);
         if (Physics.Raycast(ray, out hit, particleLayers))
         {
+            // Hit with any particle
             infoPanel.SetActive(true);
 
             ParticleAtt targetParticle = hit.transform.gameObject.GetComponent<ParticleAtt>();
@@ -62,28 +67,29 @@ public class SpatialGridDebugController : MonoBehaviour
             // Create a area circle for other particles
             DrawAffectArea(targetParticle.position);
 
-            // Call the method to get all points that within the radius
+            // Loop all particles and set all particles within raidus to blue
             for (int i = 0; i < particleList.Count; i++)
             {
                 float dist = (particleList[i].GetComponent<ParticleAtt>().position - targetParticle.position).magnitude;
-                if (dist <= 3.0f)
+                if (dist <= gameObject.GetComponent<FluidSimulation>().smoothRadius)
                 {
                     particleList[i].GetComponent<Renderer>().material.SetColor("_Color", Color.blue);
                 }
             }
 
+            // Use spatial structure to lookup particles within radius
             List<int> particles = gameObject.GetComponent<FluidSimulation>().ForeachPointWithinRadius(targetParticle.position);
             foreach (int index in particles)
             {
                 ParticleAtt affectPartice = particleList[index].GetComponent<ParticleAtt>();
                 if (affectPartice.GetComponent<Renderer>().material.color == Color.blue)
                 {
-                    // Visited before
+                    // Visited during all loop then set to green
                     affectPartice.GetComponent<Renderer>().material.SetColor("_Color", Color.green);
                 }
                 else
                 {
-                    // Error one
+                    // Error one set to red
                     affectPartice.GetComponent<Renderer>().material.SetColor("_Color", Color.red);
                 }
             }
@@ -119,7 +125,7 @@ public class SpatialGridDebugController : MonoBehaviour
 
     void DrawAffectArea(Vector2 position)
     {
-        int radius = 3;
+        int radius = (int)gameObject.GetComponent<FluidSimulation>().smoothRadius;
         const int segments = 100;
 
         Vector3[] vertices = new Vector3[segments + 1];

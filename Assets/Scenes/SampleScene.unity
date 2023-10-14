@@ -485,7 +485,7 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 963194225}
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: -10}
+  m_LocalPosition: {x: 0, y: 0, z: -20}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -772,15 +772,17 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   mat: {fileID: 2100000, guid: 8a422b1d9ab26bb4aac2f4ea1415ca1c, type: 2}
   boundingBoxRenderer: {fileID: 1940915859}
-  numParticles: 1000
+  pattern: 1
+  numParticles: 500
   particleSize: 0.1
   gravity: 0
-  collisionDamping: 0.8
+  collisionDamping: 1
   particleSpacing: 0.1
   smoothRadius: 3
   mass: 1
-  targetDensity: 0.5
-  pressureMultiplier: 9
+  targetDensity: 0.3
+  pressureMultiplier: 50
+  velocities: []
 --- !u!4 &1940915861
 Transform:
   m_ObjectHideFlags: 0
@@ -814,4 +816,4 @@ MonoBehaviour:
   mat: {fileID: 2100000, guid: 4fcfec6b80ec744498540c7c399599cb, type: 2}
   infoPanel: {fileID: 1235295288}
   infoText: {fileID: 780922204}
-  debugEnabled: 1
+  debugEnabled: 0
