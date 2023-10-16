@@ -647,7 +647,6 @@ GameObject:
   m_Component:
   - component: {fileID: 1940915861}
   - component: {fileID: 1940915860}
-  - component: {fileID: 1940915862}
   - component: {fileID: 1940915859}
   m_Layer: 0
   m_Name: GameObject
@@ -770,22 +769,19 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 842c809b08b773d4d9f555156c6fa6e3, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  mat: {fileID: 2100000, guid: 8a422b1d9ab26bb4aac2f4ea1415ca1c, type: 2}
   boundingBoxRenderer: {fileID: 1940915859}
   boundSize: {x: 17.5, y: 9.7}
-  pattern: 0
-  numParticles: 2000
-  particleSize: 0.08
-  gravity: 0
-  collisionDamping: 0.964
-  particleSpacing: 0
-  deltaTime: 1
-  smoothRadius: 0.35
-  mass: 1
-  targetDensity: 1
-  pressureMultiplier: 0.5
-  shader: {fileID: 4800000, guid: 425f9691f9cfbfe4f8c993917068c720, type: 3}
+  numParticles: 3500
   mesh: {fileID: 10210, guid: 0000000000000000e000000000000000, type: 0}
+  particleSize: 0.08
+  shader: {fileID: 4800000, guid: 425f9691f9cfbfe4f8c993917068c720, type: 3}
+  gravity: 15
+  collisionDamping: 0.93
+  smoothRadius: 0.35
+  targetDensity: 55
+  pressureMultiplier: 500
+  densities: []
+  computeDensities: []
 --- !u!4 &1940915861
 Transform:
   m_ObjectHideFlags: 0
@@ -801,22 +797,3 @@ Transform:
   m_Father: {fileID: 0}
   m_RootOrder: 2
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &1940915862
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1940915858}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 09bff6efa09d4f946a5b35a3734ccfeb, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  particleLayers:
-    serializedVersion: 2
-    m_Bits: 64
-  mat: {fileID: 2100000, guid: 4fcfec6b80ec744498540c7c399599cb, type: 2}
-  infoPanel: {fileID: 1235295288}
-  infoText: {fileID: 780922204}
-  debugEnabled: 0

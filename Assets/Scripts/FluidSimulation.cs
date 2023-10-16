@@ -2,43 +2,39 @@ using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using UnityEngine;
+using Unity.Mathematics;
 
 public class FluidSimulation : MonoBehaviour
 {
-    private static int segments = 100;
-
-    public Material mat;
     public LineRenderer boundingBoxRenderer;
-
     public Vector2 boundSize;
 
-    [Header("Particle Generation")]
-    public ParticlePattern pattern;
+    [Header("GPU Instancing Draw Particles")]
     public int numParticles = 1;
-
+    public Mesh mesh;
     public float particleSize = 0.08f;
-    public float gravity = 5;
-    [Range(0.4f, 1.0f)]
-    public float collisionDamping = 0.8f;
-    [Range(0.0f, 3.0f)]
-    public float particleSpacing = 1.0f;
-
-    public float deltaTime = 0.00001f;
+    public Shader shader;
+    private Material particleMat;
+    private ComputeBuffer argsBuffer;               // Dispatch argument
+    private uint[] args = new uint[5] { 0, 0, 0, 0, 0 };
+    private int instanceCount;
+    private const int subMeshIndex = 0;
 
     [Header("Particle Properties")]
-    public float smoothRadius = 1.0f;
-    public float mass = 1.0f;
-    public float targetDensity = 0.5f;
-    public float pressureMultiplier = 9.0f;
+    public float gravity = 5;
+    [Range(0.1f, 1.0f)]
+    public float collisionDamping = 0.8f;
+
+    [Header("Fluid Simulation Attributes")]
+    public float smoothRadius = 0.35f;
+    public float targetDensity = 55f;
+    public float pressureMultiplier = 500f;
+
+    // Num of segments to create a circle mesh
+    private static int segments = 100;
 
     // Private groups
     private List<GameObject> particleList;
-
-    private Vector2[] positions;
-    private Vector2[] predictPositions;
-    private Vector2[] velocities;
-    private float[] densities;
-
     private System.Random random = new System.Random();
 
     // Spatial grid structure
@@ -46,120 +42,103 @@ public class FluidSimulation : MonoBehaviour
     private int[] startIndices;
     private Vector2[] cellOffsets;
 
-    // Compute buffers
-    public Shader shader;
-    public Mesh mesh;
-
-    private Material grassMaterial;
-    private ComputeBuffer positionsBuffer;
-    private ComputeBuffer velocitiesBuffer;
-    private ComputeBuffer argsBuffer;           // dispatch argument
-
-    // Compute shader
+    // Compute shader and buffers
     private ComputeShader computeShader;
+    private ComputeBuffer positionBuffer;
+    private ComputeBuffer predictedPositionBuffer;
+    private ComputeBuffer velocityBuffer;
+    private ComputeBuffer densityBuffer;
 
-    private uint[] args = new uint[5] { 0, 0, 0, 0, 0 };
-    private int instanceCount;
-    private const int subMeshIndex = 0;
+    // Data arrays
+    private Vector2[] predictedPosition;
+    private Vector2[] positions;
+    private Vector2[] velocities;
+    public float[] densities;
+
+    // Compute data arrays
+    private float2[] computePredictedPosition;
+    private float2[] computePositions;
+    private float2[] computeVelocities;
+    public float[] computeDensities;
 
     // Start is called before the first frame update
     void Start()
     {
-        //particleList = new List<GameObject>();
-
-        // Initialize 
-        //boundSize = CalculateViewPortSize();
+        // Draw boundary
         DrawBoundary();
 
-        // Generate particles based on selection
-        if (pattern == ParticlePattern.Random)
-        {
-            RandomCreateParticles(1024);
-        }
-        else
-        {
-            UniformCreateParticles();
-        }
-
-        // Draw particles on screen
-        //DrawParticles();
-
-        // Initialize spatial structure for quick look
-        InitializeSpatialStructure();
-        UpdateSpatialLookup(positions, smoothRadius);
-
-        // Calculate the densities value for each particles
-        UpdateDensities();
-
         // Initialize compute shader
-        InitializeComputeShader();
+        InitializeComputeBuffers();
     }
 
     // Update is called once per frame
     void Update()
     {
-        UpdateParticleMovement(deltaTime);
-
-        positionsBuffer.SetData(positions);
-        velocitiesBuffer.SetData(velocities);
-
-        computeShader.SetInt("numParticles", numParticles);
-        computeShader.SetFloat("deltaTime", Time.deltaTime);
-        computeShader.SetVector("boundSize", boundSize);
-        computeShader.SetFloat("collisionDamping", collisionDamping);
-        computeShader.SetFloat("gravity", gravity);
-
-        //computeShader.Dispatch(1, Mathf.CeilToInt(numParticles / 8), 1, 1);
-        computeShader.Dispatch(0, Mathf.CeilToInt(numParticles / 8), 1, 1);
+        UpdateSettings(Time.deltaTime);
+        RunSimulationStep();
     }
 
     private void LateUpdate()
     {
-        grassMaterial.SetFloat("_Scale", particleSize);
-        Graphics.DrawMeshInstancedIndirect(mesh, subMeshIndex, grassMaterial, new Bounds(Vector3.zero, new Vector3(100.0f, 100.0f, 100.0f)), argsBuffer);
+        particleMat.SetFloat("_Scale", particleSize);
+        Graphics.DrawMeshInstancedIndirect(mesh, subMeshIndex, particleMat, new Bounds(Vector3.zero, new Vector3(100.0f, 100.0f, 100.0f)), argsBuffer);
     }
 
-    void InitializeComputeShader()
+    void InitializeComputeBuffers()
     {
+        computeShader = Resources.Load<ComputeShader>("FluidSim");
+
+        // Initialize Buffers
+        positionBuffer = new ComputeBuffer(numParticles, sizeof(float) * 2);
+        predictedPositionBuffer = new ComputeBuffer(numParticles, sizeof(float) * 2);
+        velocityBuffer = new ComputeBuffer(numParticles, sizeof(float) * 2);
+        densityBuffer = new ComputeBuffer(numParticles, sizeof(float) * 2);
+
         instanceCount = numParticles;
         argsBuffer = new ComputeBuffer(1, args.Length * sizeof(uint), ComputeBufferType.IndirectArguments);
 
-        // Compute Shader
-        computeShader = Resources.Load<ComputeShader>("FluidSim");
+        // Initialize data arrays
+        computePredictedPosition = new float2[numParticles];
+        computePositions = new float2[numParticles];
+        computeVelocities = new float2[numParticles];
+        computeDensities = new float[numParticles];
 
-        // Create compute buffers
-        positionsBuffer = new ComputeBuffer(numParticles, sizeof(float) * 2);
-        velocitiesBuffer = new ComputeBuffer(numParticles, sizeof(float) * 2);
+        // Initialize particles
+        computePositions = GenerateParticles(numParticles);
+        computePredictedPosition = computePositions;
 
-        // Set compute buffers data
-        positionsBuffer.SetData(positions);
-        velocitiesBuffer.SetData(velocities);
+        // Set data arrays to buffers
+        positionBuffer.SetData(computePositions);
+        predictedPositionBuffer.SetData(computePredictedPosition);
+        velocityBuffer.SetData(computeVelocities);
+        densityBuffer.SetData(computeDensities);
 
-        // Set variables
-        computeShader.SetInt("numParticles", numParticles);
-        computeShader.SetFloat("deltaTime", Time.deltaTime);
-        computeShader.SetVector("boundSize", boundSize);
-        computeShader.SetFloat("collisionDamping", collisionDamping);
-        computeShader.SetFloat("gravity", gravity);
+        // Initialize compute buffers
+        computeShader.SetBuffer(0, "Positions", positionBuffer);
+        computeShader.SetBuffer(3, "Positions", positionBuffer);
 
-        // Set buffers
-        computeShader.SetBuffer(0, "Positions", positionsBuffer);
-        computeShader.SetBuffer(0, "Velocities", velocitiesBuffer);
-        computeShader.SetBuffer(1, "Velocities", velocitiesBuffer);
+        computeShader.SetBuffer(0, "PredictedPositions", predictedPositionBuffer);
+        computeShader.SetBuffer(1, "PredictedPositions", predictedPositionBuffer);
+        computeShader.SetBuffer(2, "PredictedPositions", predictedPositionBuffer);
 
-        // Dispatch kernal
-        computeShader.Dispatch(1, Mathf.CeilToInt(numParticles / 8), 1, 1);
-        computeShader.Dispatch(0, Mathf.CeilToInt(numParticles / 8), 1, 1);
+        computeShader.SetBuffer(1, "Densities", densityBuffer);
+        computeShader.SetBuffer(2, "Densities", densityBuffer);
+
+        computeShader.SetBuffer(0, "Velocities", velocityBuffer);
+        computeShader.SetBuffer(2, "Velocities", velocityBuffer);
+        computeShader.SetBuffer(3, "Velocities", velocityBuffer);
+
+        // Set attribute values
+        UpdateSettings(Time.deltaTime);
 
         // Create a new material for shader
-        grassMaterial = new Material(shader);
-        
-        // Set attributes
-        grassMaterial.SetBuffer("_Positions", positionsBuffer);
-        grassMaterial.SetFloat("_Scale", particleSize);
-        grassMaterial.SetColor("_Color", Colour.lightblue);
+        particleMat = new Material(shader);
 
-        // Update buffer
+        // Set attributes
+        particleMat.SetBuffer("_Positions", positionBuffer);
+        particleMat.SetFloat("_Scale", particleSize);
+        particleMat.SetColor("_Color", Colour.lightblue);
+
         UpdateBuffers();
     }
 
@@ -179,6 +158,29 @@ public class FluidSimulation : MonoBehaviour
             args[0] = args[1] = args[2] = args[3] = 0;
         }
         argsBuffer.SetData(args);
+    }
+
+    void RunSimulationStep()
+    {
+        Dispatch(computeShader, numParticles, kernelIndex: 0);
+        Dispatch(computeShader, numParticles, kernelIndex: 1);
+        Dispatch(computeShader, numParticles, kernelIndex: 2);
+        Dispatch(computeShader, numParticles, kernelIndex: 3);
+    }
+
+    void UpdateSettings(float deltaTime)
+    {
+        computeShader.SetInt("numParticles", numParticles);
+        computeShader.SetFloat("deltaTime", deltaTime);
+        computeShader.SetFloat("gravity", gravity);
+        computeShader.SetFloat("collisionDamping", collisionDamping);
+        computeShader.SetFloat("smoothingRadius", smoothRadius);
+        computeShader.SetFloat("targetDensity", targetDensity);
+        computeShader.SetFloat("pressureMultiplier", pressureMultiplier);
+        computeShader.SetVector("boundsSize", boundSize);
+
+        computeShader.SetFloat("SpikyPow2ScalingFactor", 6 / (Mathf.PI * Mathf.Pow(smoothRadius, 4)));
+        computeShader.SetFloat("SpikyPow2DerivativeScalingFactor", 12 / (Mathf.Pow(smoothRadius, 4) * Mathf.PI));
     }
 
     Vector2 CalculateViewPortSize()
@@ -220,11 +222,52 @@ public class FluidSimulation : MonoBehaviour
         }
     }
 
+    float2[] GenerateParticles(int particleCount)
+    {
+        float2 s = new float2(7, 7);
+
+        int numX = Mathf.CeilToInt(Mathf.Sqrt(s.x / s.y * particleCount));
+        int numY = Mathf.CeilToInt(particleCount / (float)numX);
+        int i = 0;
+
+        float2[] particles = new float2[numParticles];
+
+        for (int y = 0; y < numY; y++)
+        {
+            for (int x = 0; x < numX; x++)
+            {
+                if (i >= particleCount) break;
+
+                float tx = numX <= 1 ? 0.5f : x / (numX - 1f);
+                float ty = numY <= 1 ? 0.5f : y / (numY - 1f);
+
+                particles[i] = new float2((tx - 0.5f) * 7f, (ty - 0.5f) * 7f) + new float2(0, 0);
+
+                i++;
+            }
+        }
+
+        return particles;
+    }
+
+    // Calculate thread group number
+    public static void Dispatch(ComputeShader computeShader, int numParticles, int kernelIndex)
+    {
+        uint x, y, z;
+        computeShader.GetKernelThreadGroupSizes(kernelIndex, out x, out y, out z);  // (8, 1, 1)
+
+        int numGroupsX = Mathf.CeilToInt(numParticles / (float)x);
+        int numGroupsY = Mathf.CeilToInt(1 / (float)y);
+        int numGroupsZ = Mathf.CeilToInt(1 / (float)z);
+
+        computeShader.Dispatch(kernelIndex, numGroupsX, numGroupsY, numGroupsZ);
+    }
+
     void RandomCreateParticles(int seed)
     {
         System.Random rng = new(seed);
         positions = new Vector2[numParticles];
-        predictPositions = new Vector2[numParticles];
+        predictedPosition = new Vector2[numParticles];
         velocities = new Vector2[numParticles];
 
         for (int i = 0; i < positions.Length; i++)
@@ -233,6 +276,7 @@ public class FluidSimulation : MonoBehaviour
             float y = (float)(rng.NextDouble() - 0.5) * boundSize.y;
 
             positions[i] = new Vector2(x, y);
+            predictedPosition[i] = new Vector2(x, y);
         }
     }
 
@@ -240,7 +284,7 @@ public class FluidSimulation : MonoBehaviour
     {
         // Create particle arrays
         positions = new Vector2[numParticles];
-        predictPositions = new Vector2[numParticles];
+        predictedPosition = new Vector2[numParticles];
         velocities = new Vector2[numParticles];
 
         // Place particles in a grid formation
@@ -253,6 +297,7 @@ public class FluidSimulation : MonoBehaviour
             float x = (i % particlesPerRow - particlesPerRow / 2f + 0.5f) * spacing;
             float y = (i / particlesPerRow - particlesPerCol / 2f + 0.5f) * spacing;
             positions[i] = new Vector2(x, y);
+            predictedPosition[i] = new Vector2(x, y);
         }
     }
 
@@ -262,16 +307,16 @@ public class FluidSimulation : MonoBehaviour
         Parallel.For(0, numParticles, i =>
         {
             velocities[i] += Vector2.down * gravity * deltaTime;
-            predictPositions[i] = positions[i] + velocities[i] * 1 / 120;
+            predictedPosition[i] = positions[i] + velocities[i] * 1 / 120;
         });
 
         // Update spatial lookup with predicted position
-        //UpdateSpatialLookup(predictPositions, smoothRadius);
+        UpdateSpatialLookup(predictedPosition, smoothRadius);
 
         // Calculate densities
         Parallel.For(0, numParticles, i =>
         {
-            densities[i] = CalculateDensity(predictPositions[i]);
+            densities[i] = CalculateDensity(predictedPosition[i]);
         });
 
         // Calculate and apply pressure force
@@ -288,23 +333,6 @@ public class FluidSimulation : MonoBehaviour
             positions[i] += velocities[i] * deltaTime;
             ResolveCollisions(ref positions[i], ref velocities[i]);
         });
-
-        /*
-        // Delete all existing particles first
-        foreach (Transform trans in transform)
-        {
-            particleList.Add(trans.gameObject);
-        }
-        foreach (GameObject particle in particleList)
-        {
-            Destroy(particle);
-        }
-
-        for (int i = 0; i < numParticles; i++)
-        {
-            DrawCircle(positions[i], particleSize, Colour.lightblue);
-        }
-        */
     }
 
     void DrawParticles()
@@ -368,7 +396,7 @@ public class FluidSimulation : MonoBehaviour
         mesh.triangles = triangles;
 
         // Assign material instance to each particle
-        Material newMat = new Material(mat);
+        Material newMat = new Material(particleMat);
         newMat.SetColor("_Color", colour);
 
         // Create a new particle object
@@ -414,20 +442,6 @@ public class FluidSimulation : MonoBehaviour
         return null;
     }
 
-    // Function to generate a random 2D vector direction
-    public Vector2 Random2DVectorDirection()
-    {
-        // Generate a random angle in radians
-        float angleRadians = (float)random.NextDouble() * 2 * Mathf.PI;
-
-        // Calculate the x and y components of the 2D vector
-        float x = Mathf.Cos(angleRadians);
-        float y = Mathf.Sin(angleRadians);
-
-        // Return the 2D vector as a Vector2
-        return new Vector2(x, y);
-    }
-
     // ==========================================
     //
     // Property Calculation for each particles
@@ -467,6 +481,20 @@ public class FluidSimulation : MonoBehaviour
         return pressure;
     }
 
+    // Function to generate a random 2D vector direction
+    public Vector2 Random2DVectorDirection()
+    {
+        // Generate a random angle in radians
+        float angleRadians = (float)random.NextDouble() * 2 * Mathf.PI;
+
+        // Calculate the x and y components of the 2D vector
+        float x = Mathf.Cos(angleRadians);
+        float y = Mathf.Sin(angleRadians);
+
+        // Return the 2D vector as a Vector2
+        return new Vector2(x, y);
+    }
+
     float CalculateDensity(Vector2 samplePoint)
     {
         float density = 0;
@@ -474,10 +502,10 @@ public class FluidSimulation : MonoBehaviour
 
         // Loop over all particle positions
         // Optimized with data structure instead
-        //List<int> pointsIdx = ForeachPointWithinRadius(samplePoint);
-        for (int idx = 0; idx < numParticles; idx++)
+        List<int> pointsIdx = ForeachPointWithinRadius(samplePoint);
+        foreach (int idx in pointsIdx)
         {
-            float dist = (predictPositions[idx] - samplePoint).magnitude;
+            float dist = (predictedPosition[idx] - samplePoint).magnitude;
             float influence = SmoothKernal(dist, smoothRadius);
 
             density += mass * influence;
@@ -510,15 +538,14 @@ public class FluidSimulation : MonoBehaviour
 
             if (particleIdx == otherParticleIndex) continue;
 
-            Vector2 offset = predictPositions[otherParticleIndex] - predictPositions[particleIdx];
+            Vector2 offset = predictedPosition[otherParticleIndex] - predictedPosition[particleIdx];
             float dst = offset.magnitude;
             Vector2 dir = dst == 0 ? offset / 0.01f : offset / dst;
             float slope = SmoothKernalDerivative(dst, smoothRadius);
             float density = densities[otherParticleIndex];
 
             float sharedPressure = CalculateSharedPressure(density, densities[particleIdx]);
-            //pressureForce += ConvertDensityToPressure(density) * dir * slope * mass / density;
-            pressureForce += sharedPressure * dir * slope * mass / density;
+            pressureForce += sharedPressure * dir * slope / density;
         }
 
         return pressureForce;
@@ -689,25 +716,30 @@ public class FluidSimulation : MonoBehaviour
         }
     }
 
-    private void OnDestroy()
+    void OnDestroy()
     {
-        // Release all buffers
-        if (positionsBuffer != null)
+        if (positionBuffer != null)
         {
-            positionsBuffer.Release();
+            positionBuffer.Release();
         }
-        positionsBuffer = null;
+        positionBuffer = null;
 
-        if (velocitiesBuffer != null)
+        if (predictedPositionBuffer != null)
         {
-            velocitiesBuffer.Release();
+            predictedPositionBuffer.Release();
         }
-        velocitiesBuffer = null;
+        predictedPositionBuffer = null;
 
-        if (argsBuffer != null)
+        if (velocityBuffer != null)
         {
-            argsBuffer.Release();
+            velocityBuffer.Release();
         }
-        argsBuffer = null;
+        velocityBuffer = null;
+
+        if (densityBuffer != null)
+        {
+            densityBuffer.Release();
+        }
+        densityBuffer = null;
     }
 }

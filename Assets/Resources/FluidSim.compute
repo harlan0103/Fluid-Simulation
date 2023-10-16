@@ -1,67 +1,177 @@
-// Each #kernel tells which function to compile; you can have many kernels
-#pragma kernel UpdatePositions      // 0
-#pragma kernel UpdateVelocities     // 1
+#pragma kernel CalculateVelocity
+#pragma kernel CalculateDensities
+#pragma kernel CalculatePressureForce
+#pragma kernel UpdatePositions
 
-// Create a RenderTexture with enableRandomWrite flag and set it
 // Buffers
 RWStructuredBuffer<float2> Positions;
+RWStructuredBuffer<float2> PredictedPositions;
 RWStructuredBuffer<float2> Velocities;
+RWStructuredBuffer<float> Densities;
 
 // Attributes
 uint numParticles;
+float2 boundsSize;
 float deltaTime;
-float2 boundSize;       // bounding box size
-float collisionDamping;
 float gravity;
+float collisionDamping;
+float smoothingRadius;
+float targetDensity;
+float pressureMultiplier;
 
-void ResolveCollisions(uint particleIdx)
+// Factors
+float SpikyPow2ScalingFactor;
+float SpikyPow2DerivativeScalingFactor;
+
+float DensityKernel(float dst, float radius)
 {
-    float2 position = Positions[particleIdx];
-    float2 velocity = Velocities[particleIdx];
-    
-    // Keep particle inside bounds
-	float2 halfSize = boundSize * 0.5;
-	float2 distanceToEdge = halfSize - abs(position);
-
-    if (distanceToEdge.x <= 0)
-	{
-        position.x = halfSize.x * sign(position.x);
-        velocity.x *= -1 * collisionDamping;
-    }
-    if (distanceToEdge.y <= 0)
-	{
-        position.y = halfSize.y * sign(position.y);
-        velocity.y *= -1 * collisionDamping;
+    if (dst > radius)
+    {
+        return 0;
     }
     
-    // Update position and velocity
-    Positions[particleIdx] = position;
-    Velocities[particleIdx] = velocity;
+    float v = radius - dst;
+    return v * v * SpikyPow2ScalingFactor;
 }
 
-// Kernals
-[numthreads(8,1,1)]
-void UpdatePositions (uint3 id : SV_DispatchThreadID)
+float DensityDerivative(float dst, float radius)
 {
-    // Update positions
-    if (id.x >= numParticles)
+    if (dst > radius)
     {
-        return;
+        return 0;
     }
     
+    float v = radius - dst;
+    return -v * SpikyPow2DerivativeScalingFactor;
+}
+
+float PressureFromDensity(float density)
+{
+    return (density - targetDensity) * pressureMultiplier;
+}
+
+float CalculateDensity(float2 pos)
+{
+    float density = 0;
+    float sqrRadius = smoothingRadius * smoothingRadius;
+
+    for (uint i = 0; i < numParticles; i++)
+    {
+        float2 neighbourPos = PredictedPositions[i];
+        float2 offsetToNeighbour = neighbourPos - pos;
+        float sqrDstToNeighbour = dot(offsetToNeighbour, offsetToNeighbour);
+		
+        if (sqrDstToNeighbour > sqrRadius)
+            continue;
+		
+        float dst = sqrt(sqrDstToNeighbour);
+        density += DensityKernel(dst, smoothingRadius);
+    }
+
+    return density;
+}
+
+void HandleCollisions(uint particleIndex)
+{
+    float2 pos = Positions[particleIndex];
+    float2 vel = Velocities[particleIndex];
+
+	// Keep particle inside bounds
+    const float2 halfSize = boundsSize * 0.5;
+    float2 edgeDst = halfSize - abs(pos);
+
+    if (edgeDst.x <= 0)
+    {
+        pos.x = halfSize.x * sign(pos.x);
+        vel.x *= -1 * collisionDamping;
+    }
+    if (edgeDst.y <= 0)
+    {
+        pos.y = halfSize.y * sign(pos.y);
+        vel.y *= -1 * collisionDamping;
+    }
+
+	// Update position and velocity
+    Positions[particleIndex] = pos;
+    Velocities[particleIndex] = vel;
+}
+
+[numthreads(8, 1, 1)]
+void UpdatePositions(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= numParticles)
+        return;
+
     Positions[id.x] += Velocities[id.x] * deltaTime;
-    ResolveCollisions(id.x);
+    HandleCollisions(id.x);
 }
 
-[numthreads(8,1,1)]
-void UpdateVelocities (uint3 id : SV_DispatchThreadID)
+[numthreads(8, 1, 1)]
+void CalculateVelocity(uint3 id : SV_DispatchThreadID)
 {
-    float2 gravityForce = float2(0, -gravity);
-    // Update velocities
     if (id.x >= numParticles)
-    {
         return;
-    }
+
+	// Update velocity
+    float2 gravityAccl = float2(0, -gravity);
+    Velocities[id.x] += gravityAccl * deltaTime;
+
+	// Update predict positions
+    const float predictionFactor = 1 / 120.0;
+    PredictedPositions[id.x] = Positions[id.x] + Velocities[id.x] * predictionFactor;
+}
+
+[numthreads(8, 1, 1)]
+void CalculateDensities(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= numParticles)
+        return;
+
+    float2 pos = PredictedPositions[id.x];
+    Densities[id.x] = CalculateDensity(pos);
+}
+
+[numthreads(8, 1, 1)]
+void CalculatePressureForce(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= numParticles)
+        return;
+
+    float density = Densities[id.x];
+    float pressure = PressureFromDensity(density);
     
-    //Velocities[id.x] += gravityForce * collisionDamping * deltaTime;
+    float2 pressureForce = 0;
+	
+    float2 pos = PredictedPositions[id.x];
+    float sqrRadius = smoothingRadius * smoothingRadius;
+
+	// For every particles
+    for (uint i = 0; i < numParticles; i++)
+    {
+		// skip if looking at self
+        if (id.x == i)
+            continue;
+		
+        float2 neighbourPos = PredictedPositions[i];
+        float2 offsetToNeighbour = neighbourPos - pos;
+        float sqrDstToNeighbour = dot(offsetToNeighbour, offsetToNeighbour);
+
+		// Skip if not within radius
+        if (sqrDstToNeighbour > sqrRadius)
+            continue;
+
+		// Calculate pressure force
+        float dst = sqrt(sqrDstToNeighbour);
+        float2 dirToNeighbour = dst > 0 ? offsetToNeighbour / dst : float2(0, 1);
+
+        float neighbourDensity = Densities[i];
+        float neighbourPressure = PressureFromDensity(neighbourDensity);
+
+        float sharedPressure = (pressure + neighbourPressure) * 0.5;
+
+        pressureForce += dirToNeighbour * DensityDerivative(dst, smoothingRadius) * sharedPressure / neighbourDensity;
+    }
+
+    float2 acceleration = pressureForce / density;
+    Velocities[id.x] += acceleration * deltaTime;
 }
