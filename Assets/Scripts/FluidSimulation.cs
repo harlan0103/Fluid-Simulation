@@ -10,12 +10,13 @@ public class FluidSimulation : MonoBehaviour
     public Material mat;
     public LineRenderer boundingBoxRenderer;
 
+    public Vector2 boundSize;
+
     [Header("Particle Generation")]
     public ParticlePattern pattern;
     public int numParticles = 1;
 
-    [Range(0.05f, 5.0f)]
-    public float particleSize = 0.1f;
+    public float particleSize = 0.08f;
     public float gravity = 5;
     [Range(0.4f, 1.0f)]
     public float collisionDamping = 0.8f;
@@ -33,7 +34,6 @@ public class FluidSimulation : MonoBehaviour
     // Private groups
     private List<GameObject> particleList;
 
-    private Vector2 boundSize;
     private Vector2[] positions;
     private Vector2[] predictPositions;
     private Vector2[] velocities;
@@ -68,7 +68,7 @@ public class FluidSimulation : MonoBehaviour
         //particleList = new List<GameObject>();
 
         // Initialize 
-        boundSize = CalculateViewPortSize();
+        //boundSize = CalculateViewPortSize();
         DrawBoundary();
 
         // Generate particles based on selection
@@ -85,11 +85,11 @@ public class FluidSimulation : MonoBehaviour
         //DrawParticles();
 
         // Initialize spatial structure for quick look
-        //InitializeSpatialStructure();
-        //UpdateSpatialLookup(positions, smoothRadius);
+        InitializeSpatialStructure();
+        UpdateSpatialLookup(positions, smoothRadius);
 
         // Calculate the densities value for each particles
-        //UpdateDensities();
+        UpdateDensities();
 
         // Initialize compute shader
         InitializeComputeShader();
@@ -98,14 +98,18 @@ public class FluidSimulation : MonoBehaviour
     // Update is called once per frame
     void Update()
     {
-        //UpdateParticleMovement(deltaTime);
+        UpdateParticleMovement(deltaTime);
+
+        positionsBuffer.SetData(positions);
+        velocitiesBuffer.SetData(velocities);
+
         computeShader.SetInt("numParticles", numParticles);
         computeShader.SetFloat("deltaTime", Time.deltaTime);
         computeShader.SetVector("boundSize", boundSize);
         computeShader.SetFloat("collisionDamping", collisionDamping);
         computeShader.SetFloat("gravity", gravity);
 
-        computeShader.Dispatch(1, Mathf.CeilToInt(numParticles / 8), 1, 1);
+        //computeShader.Dispatch(1, Mathf.CeilToInt(numParticles / 8), 1, 1);
         computeShader.Dispatch(0, Mathf.CeilToInt(numParticles / 8), 1, 1);
     }
 
@@ -262,7 +266,7 @@ public class FluidSimulation : MonoBehaviour
         });
 
         // Update spatial lookup with predicted position
-        UpdateSpatialLookup(predictPositions, smoothRadius);
+        //UpdateSpatialLookup(predictPositions, smoothRadius);
 
         // Calculate densities
         Parallel.For(0, numParticles, i =>
@@ -285,6 +289,7 @@ public class FluidSimulation : MonoBehaviour
             ResolveCollisions(ref positions[i], ref velocities[i]);
         });
 
+        /*
         // Delete all existing particles first
         foreach (Transform trans in transform)
         {
@@ -299,6 +304,7 @@ public class FluidSimulation : MonoBehaviour
         {
             DrawCircle(positions[i], particleSize, Colour.lightblue);
         }
+        */
     }
 
     void DrawParticles()
@@ -468,10 +474,10 @@ public class FluidSimulation : MonoBehaviour
 
         // Loop over all particle positions
         // Optimized with data structure instead
-        List<int> pointsIdx = ForeachPointWithinRadius(samplePoint);
-        foreach (int idx in pointsIdx)
+        //List<int> pointsIdx = ForeachPointWithinRadius(samplePoint);
+        for (int idx = 0; idx < numParticles; idx++)
         {
-            float dist = (positions[idx] - samplePoint).magnitude;
+            float dist = (predictPositions[idx] - samplePoint).magnitude;
             float influence = SmoothKernal(dist, smoothRadius);
 
             density += mass * influence;
@@ -497,14 +503,14 @@ public class FluidSimulation : MonoBehaviour
     {
         Vector2 pressureForce = Vector2.zero;
 
-        List<int> particleIdxList = ForeachPointWithinRadius(positions[particleIdx]);
-        for (int i = 0; i < particleIdxList.Count; i++)
+        //List<int> particleIdxList = ForeachPointWithinRadius(predictPositions[particleIdx]);
+        for (int otherParticleIndex = 0; otherParticleIndex < numParticles; otherParticleIndex++)
         {
-            int otherParticleIndex = particleIdxList[i];
+            //int otherParticleIndex = particleIdxList[i];
 
             if (particleIdx == otherParticleIndex) continue;
 
-            Vector2 offset = positions[otherParticleIndex] - positions[particleIdx];
+            Vector2 offset = predictPositions[otherParticleIndex] - predictPositions[particleIdx];
             float dst = offset.magnitude;
             Vector2 dir = dst == 0 ? offset / 0.01f : offset / dst;
             float slope = SmoothKernalDerivative(dst, smoothRadius);

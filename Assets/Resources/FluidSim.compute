@@ -63,5 +63,5 @@ void UpdateVelocities (uint3 id : SV_DispatchThreadID)
         return;
     }
     
-    Velocities[id.x] += gravityForce * collisionDamping * deltaTime;
+    //Velocities[id.x] += gravityForce * collisionDamping * deltaTime;
 }

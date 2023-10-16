@@ -460,7 +460,7 @@ Camera:
   near clip plane: 0.3
   far clip plane: 1000
   field of view: 60
-  orthographic: 0
+  orthographic: 1
   orthographic size: 5
   m_Depth: -1
   m_CullingMask:
@@ -485,7 +485,7 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 963194225}
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: -30}
+  m_LocalPosition: {x: 0, y: 0, z: -10}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -772,17 +772,18 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   mat: {fileID: 2100000, guid: 8a422b1d9ab26bb4aac2f4ea1415ca1c, type: 2}
   boundingBoxRenderer: {fileID: 1940915859}
-  pattern: 1
-  numParticles: 4000
-  particleSize: 0.25
+  boundSize: {x: 17.5, y: 9.7}
+  pattern: 0
+  numParticles: 2000
+  particleSize: 0.08
   gravity: 0
   collisionDamping: 0.964
   particleSpacing: 0
   deltaTime: 1
-  smoothRadius: 2
+  smoothRadius: 0.35
   mass: 1
-  targetDensity: 0.5
-  pressureMultiplier: 0.001
+  targetDensity: 1
+  pressureMultiplier: 0.5
   shader: {fileID: 4800000, guid: 425f9691f9cfbfe4f8c993917068c720, type: 3}
   mesh: {fileID: 10210, guid: 0000000000000000e000000000000000, type: 0}
 --- !u!4 &1940915861
