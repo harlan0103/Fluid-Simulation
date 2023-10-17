@@ -1,18 +1,28 @@
 using Unity.Mathematics;
 using UnityEngine;
+using UnityEngine.UIElements;
+using static UnityEngine.EventSystems.EventTrigger;
 
 public class FluidSimulation3D : MonoBehaviour
 {
-    [Header("GPU Instancing Draw Particles")]
-    public int numParticles = 1;
+    [Header("Scene Setting")]
+    public float3 boundingBox = new float3(10f, 11f, 6f);
+    public GameObject groundObj;
+
+    [Header("Particle Instance")]
     public Mesh mesh;
     public float particleSize = 0.08f;
     public Shader shader;
+    public float3 spawnCenter;
+    public int3 spawnCubeSize;
+    public float offset;
     private Material particleMat;
     private ComputeBuffer argsBuffer;               // Dispatch argument
     private uint[] args = new uint[5] { 0, 0, 0, 0, 0 };
     private int instanceCount;
     private const int subMeshIndex = 0;
+    private int numParticles;
+
 
     // Compute shader and buffers
     private ComputeShader computeShader;
@@ -22,7 +32,7 @@ public class FluidSimulation3D : MonoBehaviour
     private float3[] computePositions;
 
     void Start()
-    {
+    { 
         InitializeComputeBuffers();
     }
 
@@ -38,9 +48,24 @@ public class FluidSimulation3D : MonoBehaviour
         Graphics.DrawMeshInstancedIndirect(mesh, subMeshIndex, particleMat, new Bounds(Vector3.zero, new Vector3(100.0f, 100.0f, 100.0f)), argsBuffer);
     }
 
+    private void OnDrawGizmos()
+    {
+        Gizmos.color = Color.blue;
+        Gizmos.DrawWireCube(Vector3.zero, boundingBox);
+    }
+
+#if UNITY_EDITOR
+    private void OnValidate()
+    {
+        UpdateGroundPosition();
+    }
+#endif
+
     void InitializeComputeBuffers()
     {
         computeShader = Resources.Load<ComputeShader>("FluidSim3D");
+
+        numParticles = spawnCubeSize.x * spawnCubeSize.y * spawnCubeSize.z;
 
         // Initialize Buffers
         positionBuffer = new ComputeBuffer(numParticles, sizeof(float) * 3);
@@ -52,7 +77,7 @@ public class FluidSimulation3D : MonoBehaviour
         computePositions = new float3[numParticles];
 
         // Initialize particles
-        computePositions[0] = new float3(0f, 0f, 0f);
+        computePositions = GenerateParticles(numParticles);
 
         // Set data arrays to buffers
         positionBuffer.SetData(computePositions);
@@ -113,5 +138,36 @@ public class FluidSimulation3D : MonoBehaviour
         int numGroupsZ = Mathf.CeilToInt(1 / (float)z);
 
         computeShader.Dispatch(kernelIndex, numGroupsX, numGroupsY, numGroupsZ);
+    }
+
+    float3[] GenerateParticles(int particleCount)
+    {
+        float3[] points = new float3[particleCount];
+
+        int i = 0;
+        for (int x = 0; x < spawnCubeSize.x; x++)
+        {
+            for (int y = 0; y < spawnCubeSize.y; y++)
+            {
+                for (int z = 0; z < spawnCubeSize.z; z++)
+                {
+                    float px = x * offset * 0.5f;
+                    float py = y * offset * 0.5f;
+                    float pz = z * offset * 0.5f;
+
+                    points[i] = spawnCenter + new float3(px, py, pz);
+                    i++;
+                }
+            }
+        }
+
+        return points;
+    }
+
+    void UpdateGroundPosition()
+    {
+        float yOffset = boundingBox.y / 2f;
+        groundObj.transform.position = new Vector3(0, -yOffset - 0.5f, 0);
+        groundObj.transform.localScale = new Vector3(boundingBox.x, 1, boundingBox.z);
     }
 }

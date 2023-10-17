@@ -4,7 +4,7 @@
 RWStructuredBuffer<float3> Positions;
 
 // Attributes
-float numParticles;
+uint numParticles;
 
 [numthreads(8,1,1)]
 void UpdatePositions(uint3 id : SV_DispatchThreadID)
