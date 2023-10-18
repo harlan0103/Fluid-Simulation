@@ -153,22 +153,29 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   boundingBox:
-    x: 14.3
-    y: 11.52
-    z: 18.5
+    x: 5.9
+    y: 4.93
+    z: 4.33
   groundObj: {fileID: 948975307}
+  iterationsPerframe: 3
+  timeScale: 0.42
   mesh: {fileID: 10207, guid: 0000000000000000e000000000000000, type: 0}
-  particleSize: 0.2
+  particleSize: 0.08
   shader: {fileID: 4800000, guid: b75e385ea7c614f4fb1161be10781b7c, type: 3}
   spawnCenter:
-    x: 0
-    y: 0
-    z: 0
+    x: -1.5
+    y: -1.5
+    z: -1.5
   spawnCubeSize:
-    x: 5
-    y: 5
-    z: 5
-  offset: 0.5
+    x: 25
+    y: 25
+    z: 25
+  offset: 0.2
+  gravity: 15
+  collisionDamping: 0.8
+  smoothRadius: 0.35
+  targetDensity: 600
+  pressureMultiplier: 230
 --- !u!4 &183090238
 Transform:
   m_ObjectHideFlags: 0
@@ -244,7 +251,7 @@ Camera:
   near clip plane: 0.3
   far clip plane: 1000
   field of view: 60
-  orthographic: 1
+  orthographic: 0
   orthographic size: 5
   m_Depth: -1
   m_CullingMask:
@@ -374,8 +381,8 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 948975307}
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: -6.26, z: 0}
-  m_LocalScale: {x: 14.3, y: 1, z: 18.5}
+  m_LocalPosition: {x: 0, y: -2.615, z: 0}
+  m_LocalScale: {x: 5.9, y: 0.3, z: 4.33}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 0}

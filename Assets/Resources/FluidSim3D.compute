@@ -1,10 +1,110 @@
+#pragma kernel CalculateVelocity
+#pragma kernel CalculateDensities
+#pragma kernel CalculatePressureForce
 #pragma kernel UpdatePositions
 
 // Buffers
 RWStructuredBuffer<float3> Positions;
+RWStructuredBuffer<float3> PredictedPositions;
+RWStructuredBuffer<float3> Velocities;
+RWStructuredBuffer<float> Densities;
 
 // Attributes
 uint numParticles;
+float gravity;
+float deltaTime;
+float3 boundsSize;
+float collisionDamping;
+float smoothingRadius;
+float targetDensity;
+float pressureMultiplier;
+
+// Factors
+float radius2;
+float radius3;
+float SpikyPow2ScalingFactor;
+float DerivativeSpikyPow2ScalingFactor;
+
+float DensityKernel(float dst, float radius)
+{
+    if (dst > radius)
+    {
+        return 0;
+    }
+    
+    float v = radius - dst;
+    return v * v * SpikyPow2ScalingFactor;
+}
+
+float DensityDerivative(float dst, float radius)
+{
+    if (dst > radius)
+    {
+        return 0;
+    }
+    
+    float v = radius - dst;
+    return -v * DerivativeSpikyPow2ScalingFactor;
+}
+
+float PressureFromDensity(float density)
+{
+    return (density - targetDensity) * pressureMultiplier;
+}
+
+float CalculateDensity(float3 pos)
+{
+    float density = 0;
+
+    for (uint i = 0; i < numParticles; i++)
+    {
+        uint neighbourIndex = i;
+
+        float3 neighbourPos = PredictedPositions[neighbourIndex];
+        float3 offsetToNeighbour = neighbourPos - pos;
+        float sqrDstToNeighbour = dot(offsetToNeighbour, offsetToNeighbour);
+
+		// Skip if not within radius
+        if (sqrDstToNeighbour > radius2)
+        continue;
+
+		// Calculate density and near density
+        float dst = sqrt(sqrDstToNeighbour);
+        density += DensityKernel(dst, smoothingRadius);
+    }
+	
+    return density;
+}
+
+void HandleCollisions(uint particleIndex)
+{
+    float3 pos = Positions[particleIndex];
+    float3 vel = Velocities[particleIndex];
+
+	// Keep particle inside bounds
+    const float3 halfSize = boundsSize * 0.5;
+    float3 edgeDst = halfSize - abs(pos);
+
+    if (edgeDst.x <= 0)
+    {
+        pos.x = halfSize.x * sign(pos.x);
+        vel.x *= -1 * collisionDamping;
+    }
+    if (edgeDst.y <= 0)
+    {
+        pos.y = halfSize.y * sign(pos.y);
+        vel.y *= -1 * collisionDamping;
+    }
+    if (edgeDst.z <= 0)
+    {
+        pos.z = halfSize.z * sign(pos.z);
+        vel.z *= -1 * collisionDamping;
+    }
+
+	// Update position and velocity
+    Positions[particleIndex] = pos;
+    Velocities[particleIndex] = vel;
+}
 
 [numthreads(8,1,1)]
 void UpdatePositions(uint3 id : SV_DispatchThreadID)
@@ -14,5 +114,75 @@ void UpdatePositions(uint3 id : SV_DispatchThreadID)
         return;
     }
 
-    //Positions[id.x] = somthing
+    Positions[id.x] += Velocities[id.x] * deltaTime;
+    HandleCollisions(id.x);
+}
+
+[numthreads(8, 1, 1)]
+void CalculateVelocity(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= numParticles)
+        return;
+
+	// Update velocity
+    float3 gravityAccl = float3(0, -gravity, 0);
+    Velocities[id.x] += gravityAccl * deltaTime;
+
+	// Update predict positions
+    const float predictionFactor = 1 / 120.0;
+    PredictedPositions[id.x] = Positions[id.x] + Velocities[id.x] * predictionFactor;
+}
+
+[numthreads(8, 1, 1)]
+void CalculateDensities(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= numParticles)
+        return;
+
+    float3 pos = PredictedPositions[id.x];
+    Densities[id.x] = CalculateDensity(pos);
+}
+
+[numthreads(8, 1, 1)]
+void CalculatePressureForce(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= numParticles)
+        return;
+
+	// Calculate pressure
+    float density = Densities[id.x];
+    float pressure = PressureFromDensity(density);
+    float3 pressureForce = 0;
+	
+    float3 pos = PredictedPositions[id.x];
+
+    // For each particle
+    for (uint i = 0; i < numParticles; i++)
+    {
+        uint neighbourIndex = i;
+		// Skip if looking at self
+        if (neighbourIndex == id.x)
+            continue;
+
+        float3 neighbourPos = PredictedPositions[neighbourIndex];
+        float3 offsetToNeighbour = neighbourPos - pos;
+        float sqrDstToNeighbour = dot(offsetToNeighbour, offsetToNeighbour);
+
+		// Skip if not within radius
+        if (sqrDstToNeighbour > radius2)
+            continue;
+
+		// Calculate pressure force
+        float densityNeighbour = Densities[neighbourIndex];
+        float neighbourPressure = PressureFromDensity(densityNeighbour);
+        float sharedPressure = (pressure + neighbourPressure) / 2;
+
+        float dst = sqrt(sqrDstToNeighbour);
+        float3 dir = dst > 0 ? offsetToNeighbour / dst : float3(0, 1, 0);
+
+        pressureForce += dir * DensityDerivative(dst, smoothingRadius) * sharedPressure / densityNeighbour;
+    }
+
+    float3 acceleration = pressureForce / density;
+    Velocities[id.x] += acceleration * deltaTime;
 }
