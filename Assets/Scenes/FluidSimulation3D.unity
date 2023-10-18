@@ -158,7 +158,7 @@ MonoBehaviour:
     z: 4.33
   groundObj: {fileID: 948975307}
   iterationsPerframe: 3
-  timeScale: 0.42
+  timeScale: 0.9
   mesh: {fileID: 10207, guid: 0000000000000000e000000000000000, type: 0}
   particleSize: 0.08
   shader: {fileID: 4800000, guid: b75e385ea7c614f4fb1161be10781b7c, type: 3}
@@ -167,15 +167,23 @@ MonoBehaviour:
     y: -1.5
     z: -1.5
   spawnCubeSize:
-    x: 25
-    y: 25
-    z: 25
+    x: 16
+    y: 16
+    z: 16
   offset: 0.2
+  particleColor: {r: 0.68, g: 0.85, b: 0.9, a: 0}
   gravity: 15
   collisionDamping: 0.8
   smoothRadius: 0.35
   targetDensity: 600
   pressureMultiplier: 230
+  colorDebugOn: 1
+  targetIndex: 9
+  debugColor: {r: 0.92653286, g: 1, b: 0, a: 0}
+  particleIndicies: 
+  particleCellIndicies: 
+  cellOffsets: 
+  keyValueDebugger: 
 --- !u!4 &183090238
 Transform:
   m_ObjectHideFlags: 0

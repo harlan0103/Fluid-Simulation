@@ -29,6 +29,7 @@ Shader "Unlit/Particle3D"
                 float2 uv : TEXCOORD0;
                 float4 vertex : SV_POSITION;
                 float normal : TEXCOORD1;
+                float3 color : TEXCOORD2;
             };
 
             sampler2D _MainTex;
@@ -38,6 +39,7 @@ Shader "Unlit/Particle3D"
 
             // Compute shader
             StructuredBuffer<float3> _Positions;
+            StructuredBuffer<float3> _DebugColors;
 
             v2f vert (appdata v, uint instanceID : SV_InstanceID)
             {
@@ -45,9 +47,12 @@ Shader "Unlit/Particle3D"
 				float3 worldVertPos = centreWorld + mul(unity_ObjectToWorld, v.vertex * _Scale);
 				float3 objectVertPos = mul(unity_WorldToObject, float4(worldVertPos.xyz, 1));
 
+                float3 colour = float3(_DebugColors[instanceID]);
+
 				v2f o;
 				o.uv = v.uv;
                 o.normal = v.normal;
+                o.color = colour;
 				o.vertex = UnityObjectToClipPos(objectVertPos);
 
                 return o;
@@ -58,7 +63,7 @@ Shader "Unlit/Particle3D"
                 float shading = saturate(dot(_WorldSpaceLightPos0.xyz, i.normal));
 				shading = (shading + 1.2) / 1.4;
 
-				return float4(_Color.xyz * shading, 1);
+				return float4(i.color.xyz * shading, 1);
             }
             ENDCG
         }

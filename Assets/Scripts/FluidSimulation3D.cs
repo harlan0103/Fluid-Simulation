@@ -1,4 +1,6 @@
+using System;
 using Unity.Mathematics;
+using Unity.VisualScripting;
 using UnityEngine;
 
 public class FluidSimulation3D : MonoBehaviour
@@ -16,6 +18,7 @@ public class FluidSimulation3D : MonoBehaviour
     public float3 spawnCenter;
     public int3 spawnCubeSize;
     public float offset;
+    public Color particleColor;
     private Material particleMat;
     private ComputeBuffer argsBuffer;               // Dispatch argument
     private uint[] args = new uint[5] { 0, 0, 0, 0, 0 };
@@ -33,6 +36,11 @@ public class FluidSimulation3D : MonoBehaviour
     public float targetDensity = 55f;
     public float pressureMultiplier = 500f;
 
+    [Header("Debug")]
+    public bool colorDebugOn = false;
+    public int targetIndex = 0;
+    public Color debugColor;
+
     // Compute shader and buffers
     private ComputeShader computeShader;
     private ComputeBuffer positionBuffer;
@@ -40,11 +48,36 @@ public class FluidSimulation3D : MonoBehaviour
     private ComputeBuffer velocityBuffer;
     private ComputeBuffer densityBuffer;
 
+    private ComputeBuffer particleIndexBuffer;          // sorted particle indices array
+    private ComputeBuffer particleCellIndexBuffer;      // sorted hash cell index for given particle
+    private ComputeBuffer cellOffsetBuffer;             // offset of cell number
+
+    private ComputeBuffer colorBuffer;
+
+
     // Compute data arrays
     private float3[] computePositions;
     private float3[] predictedPositions;
     private float3[] velocities;
     private float[] densities;
+    public uint[] particleIndicies;
+    public uint[] particleCellIndicies;
+    public uint[] cellOffsets;
+    private Vector3[] colors;
+
+    public uint[] keyValueDebugger;     // For debug use
+
+    public enum kernels
+    { 
+        CalculateVelocity = 0,
+        CalculateDensities = 1,
+        CalculatePressureForce = 2,
+        UpdatePositions = 3,
+        HashParticles = 4,
+        BitonicSort = 5,
+        CalculateCellOffsets = 6,
+        ClearCellOffsets = 7
+    }
 
     void Start()
     { 
@@ -95,6 +128,10 @@ public class FluidSimulation3D : MonoBehaviour
         predictedPositionBuffer = new ComputeBuffer(numParticles, sizeof(float) * 3);
         velocityBuffer = new ComputeBuffer(numParticles, sizeof(float) * 3);
         densityBuffer = new ComputeBuffer(numParticles, sizeof(float));
+        particleIndexBuffer = new ComputeBuffer(numParticles, sizeof(int));
+        particleCellIndexBuffer = new ComputeBuffer(numParticles, sizeof(int));
+        cellOffsetBuffer = new ComputeBuffer(numParticles, sizeof(int));
+        colorBuffer = new ComputeBuffer(numParticles, sizeof(float) * 3);
 
         instanceCount = numParticles;
         argsBuffer = new ComputeBuffer(1, args.Length * sizeof(uint), ComputeBufferType.IndirectArguments);
@@ -104,20 +141,45 @@ public class FluidSimulation3D : MonoBehaviour
         predictedPositions = new float3[numParticles];
         velocities = new float3[numParticles];
         densities = new float[numParticles];
+        particleIndicies = new uint[numParticles];
+        particleCellIndicies = new uint[numParticles];
+        cellOffsets = new uint[numParticles];
+        colors = new Vector3[numParticles];
+        keyValueDebugger = new uint[numParticles];
 
         // Initialize particles
         computePositions = GenerateParticles(numParticles);
         predictedPositions = computePositions;
+        
+        for (uint i = 0; i < numParticles; i++)
+        {
+            particleIndicies[i] = i;
+        }
+        
+        // Color debugger intialize
+        for (uint i = 0; i < numParticles; i++)
+        {
+            colors[i] = new float3(particleColor.r, particleColor.g, particleColor.b);
+        }
+        if (colorDebugOn)
+        {
+            colors[targetIndex] = new float3(Color.red.r, Color.red.g, Color.red.b);
+        }
 
         // Set data arrays to buffers
         positionBuffer.SetData(computePositions);
         predictedPositionBuffer.SetData(predictedPositions);
         velocityBuffer.SetData(velocities);
         densityBuffer.SetData(densities);
+        particleIndexBuffer.SetData(particleIndicies);
+        particleCellIndexBuffer.SetData(particleCellIndicies);
+        cellOffsetBuffer.SetData(cellOffsets);
+        colorBuffer.SetData(colors);
 
         // Initialize compute buffers
         computeShader.SetBuffer(0, "Positions", positionBuffer);
         computeShader.SetBuffer(3, "Positions", positionBuffer);
+        computeShader.SetBuffer(4, "Positions", positionBuffer);
 
         computeShader.SetBuffer(0, "PredictedPositions", predictedPositionBuffer);
         computeShader.SetBuffer(1, "PredictedPositions", predictedPositionBuffer);
@@ -130,6 +192,27 @@ public class FluidSimulation3D : MonoBehaviour
         computeShader.SetBuffer(1, "Densities", densityBuffer);
         computeShader.SetBuffer(2, "Densities", densityBuffer);
 
+        computeShader.SetBuffer((int)kernels.CalculateDensities, "ParticleIndicies", particleIndexBuffer);
+        computeShader.SetBuffer((int)kernels.CalculatePressureForce, "ParticleIndicies", particleIndexBuffer);
+        computeShader.SetBuffer((int)kernels.HashParticles, "ParticleIndicies", particleIndexBuffer);
+        computeShader.SetBuffer((int)kernels.BitonicSort, "ParticleIndicies", particleIndexBuffer);
+        computeShader.SetBuffer((int)kernels.CalculateCellOffsets, "ParticleIndicies", particleIndexBuffer);
+
+        computeShader.SetBuffer((int)kernels.CalculateDensities, "ParticleCellIndicies", particleCellIndexBuffer);
+        computeShader.SetBuffer((int)kernels.CalculatePressureForce, "ParticleCellIndicies", particleCellIndexBuffer);
+        computeShader.SetBuffer((int)kernels.HashParticles, "ParticleCellIndicies", particleCellIndexBuffer);
+        computeShader.SetBuffer((int)kernels.BitonicSort, "ParticleCellIndicies", particleCellIndexBuffer);
+        computeShader.SetBuffer((int)kernels.CalculateCellOffsets, "ParticleCellIndicies", particleCellIndexBuffer);
+
+        computeShader.SetBuffer((int)kernels.CalculateDensities, "CellOffset", cellOffsetBuffer);
+        computeShader.SetBuffer((int)kernels.CalculatePressureForce, "CellOffset", cellOffsetBuffer);
+        computeShader.SetBuffer((int)kernels.HashParticles, "CellOffset", cellOffsetBuffer);
+        computeShader.SetBuffer((int)kernels.CalculateCellOffsets, "CellOffset", cellOffsetBuffer);
+        computeShader.SetBuffer((int)kernels.ClearCellOffsets, "CellOffset", cellOffsetBuffer);
+
+        computeShader.SetBuffer((int)kernels.CalculateDensities, "ColorBuffer", colorBuffer);
+        computeShader.SetBuffer((int)kernels.ClearCellOffsets, "ColorBuffer", colorBuffer);
+
         // Set attribute values
         UpdateSettings(Time.deltaTime);
 
@@ -138,6 +221,7 @@ public class FluidSimulation3D : MonoBehaviour
 
         // Set attributes
         particleMat.SetBuffer("_Positions", positionBuffer);
+        particleMat.SetBuffer("_DebugColors", colorBuffer);
         particleMat.SetFloat("_Scale", particleSize);
         particleMat.SetColor("_Color", Colour.lightblue);
 
@@ -162,16 +246,9 @@ public class FluidSimulation3D : MonoBehaviour
         argsBuffer.SetData(args);
     }
 
-    void RunSimulationStep()
-    {
-        Dispatch(computeShader, numParticles, 0);
-        Dispatch(computeShader, numParticles, 1);
-        Dispatch(computeShader, numParticles, 2);
-        Dispatch(computeShader, numParticles, 3);
-    }
-
     void UpdateSettings(float deltaTime)
     {
+        // Attributes
         computeShader.SetInt("numParticles", numParticles);
         computeShader.SetFloat("deltaTime", deltaTime);
         computeShader.SetFloat("gravity", gravity);
@@ -181,10 +258,42 @@ public class FluidSimulation3D : MonoBehaviour
         computeShader.SetFloat("targetDensity", targetDensity);
         computeShader.SetFloat("pressureMultiplier", pressureMultiplier);
 
+        // Color debugger
+        computeShader.SetVector("debugColor", new Vector3(debugColor.r, debugColor.g, debugColor.b));
+        computeShader.SetVector("defaultColor", new Vector3(particleColor.r, particleColor.g, particleColor.b));
+        computeShader.SetVector("testParticleColor", new Vector3(Color.red.r, Color.red.g, Color.red.b));
+        computeShader.SetInt("targetIndex", targetIndex);
+        computeShader.SetBool("debugOn", colorDebugOn);
+
+        // Factors
         computeShader.SetFloat("radius2", smoothRadius * smoothRadius);
         computeShader.SetFloat("radius3", smoothRadius * smoothRadius * smoothRadius);
         computeShader.SetFloat("SpikyPow2ScalingFactor", 15 / (2 * Mathf.PI * Mathf.Pow(smoothRadius, 5)));
         computeShader.SetFloat("DerivativeSpikyPow2ScalingFactor", 15 / (Mathf.Pow(smoothRadius, 5) * Mathf.PI));
+    }
+
+    void RunSimulationStep()
+    {
+        Dispatch(computeShader, numParticles, (int)kernels.ClearCellOffsets);
+        Dispatch(computeShader, numParticles, (int)kernels.HashParticles);
+        SortPartices();
+        Dispatch(computeShader, numParticles, (int)kernels.CalculateCellOffsets);
+
+        Dispatch(computeShader, numParticles, 0);
+        Dispatch(computeShader, numParticles, 1);
+        Dispatch(computeShader, numParticles, 2);
+        Dispatch(computeShader, numParticles, 3);
+
+        particleIndexBuffer.GetData(particleIndicies);
+        particleCellIndexBuffer.GetData(particleCellIndicies);
+        cellOffsetBuffer.GetData(cellOffsets);
+
+        for (int i = 0; i < numParticles; i++)
+        {
+            uint particleIdxAt_i = particleIndicies[i];
+            uint keyValueAt_i = particleCellIndicies[particleIdxAt_i];
+            keyValueDebugger[i] = keyValueAt_i;
+        }
     }
 
     public static void Dispatch(ComputeShader computeShader, int numParticles, int kernelIndex)
@@ -228,6 +337,21 @@ public class FluidSimulation3D : MonoBehaviour
         float yOffset = boundingBox.y / 2f;
         groundObj.transform.position = new Vector3(0, -yOffset - 0.15f, 0);
         groundObj.transform.localScale = new Vector3(boundingBox.x, 0.3f, boundingBox.z);
+    }
+
+    public void SortPartices()
+    {
+        var count = numParticles;
+        for (var dim = 2; dim <= count; dim <<= 1)
+        {
+            computeShader.SetInt("dimension", dim);
+            for (var block = dim >> 1; block > 0; block >>= 1)
+            {
+                computeShader.SetInt("block", block);
+                //Dispatch(computeShader, count, (int)kernels.BitonicSort);
+                computeShader.Dispatch((int)kernels.BitonicSort, count / 256, 1, 1);
+            }
+        }
     }
 
     void OnDestroy()
