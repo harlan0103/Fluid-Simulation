@@ -95,30 +95,6 @@ float PressureFromDensity(float density)
     return (density - targetDensity) * pressureMultiplier;
 }
 
-float CalculateDensity(float3 pos)
-{
-    float density = 0;
-
-    for (uint i = 0; i < numParticles; i++)
-    {
-        uint neighbourIndex = i;
-
-        float3 neighbourPos = PredictedPositions[neighbourIndex];
-        float3 offsetToNeighbour = neighbourPos - pos;
-        float sqrDstToNeighbour = dot(offsetToNeighbour, offsetToNeighbour);
-
-		// Skip if not within radius
-        if (sqrDstToNeighbour > radius2)
-        continue;
-
-		// Calculate density and near density
-        float dst = sqrt(sqrDstToNeighbour);
-        density += DensityKernel(dst, smoothingRadius);
-    }
-	
-    return density;
-}
-
 void HandleCollisions(uint particleIndex)
 {
     float3 pos = Positions[particleIndex];
@@ -185,7 +161,6 @@ void CalculateDensities(uint3 id : SV_DispatchThreadID)
     float density = 0;
     uint particleIdxFromList = ParticleIndicies[id.x];
     float3 _pos = PredictedPositions[particleIdxFromList];
-    float3 pos = PredictedPositions[id.x];          // Original Calculation
     int3 _cellIdx = PosToCellCoord(_pos);
         
     for (int i = -1; i <= 1; i++)
@@ -228,8 +203,8 @@ void CalculateDensities(uint3 id : SV_DispatchThreadID)
                         }
                         
                         // Calculate density and near density
-                        //float dst = sqrt(sqrDstToNeighbour);
-                        //density += DensityKernel(dst, smoothingRadius);
+                        float dst = sqrt(sqrDstToNeighbour);
+                        density += DensityKernel(dst, smoothingRadius);
                     }
                     
                     neighbourStartIdx++;
@@ -238,8 +213,7 @@ void CalculateDensities(uint3 id : SV_DispatchThreadID)
         }
     }   
 	
-    Densities[id.x] = CalculateDensity(pos);
-    //Densities[particleIdx] = density;
+    Densities[particleIdxFromList] = density;
 }
 
 [numthreads(256, 1, 1)]
@@ -249,8 +223,8 @@ void CalculatePressureForce(uint3 id : SV_DispatchThreadID)
         return;
 
 	// Calculate pressure
-    uint particleIdx = id.x;
-    float3 pos = PredictedPositions[id.x];
+    uint particleIdx = ParticleIndicies[id.x];
+    float3 pos = PredictedPositions[particleIdx];
     int3 cellIdx = PosToCellCoord(pos);
 
     float density = Densities[particleIdx];
@@ -258,7 +232,6 @@ void CalculatePressureForce(uint3 id : SV_DispatchThreadID)
     float3 pressureForce = 0;
 	
     // For neighbour 3x3 blocks
-    /*
     for (int i = -1; i <= 1; i++)
     {
         for (int j = -1; j <= 1; j++)
@@ -269,78 +242,45 @@ void CalculatePressureForce(uint3 id : SV_DispatchThreadID)
                 uint neighbourKey = KeyFromHash(HashFromCell(neighbourIdx));
                 uint neighbourStartIdx = CellOffset[neighbourKey];
 
-                while (neighbourStartIdx != 99999999 & neighbourStartIdx < numParticles)
+                while (neighbourStartIdx < numParticles)
                 {
-                    uint neighbourIndex = ParticleIndicies[neighbourStartIdx];
+                    uint neighbourPosIdx = ParticleIndicies[neighbourStartIdx];
                     
-                    if (ParticleCellIndicies[neighbourIndex] != neighbourKey)
+                    // End loop if meet the last same key index
+                    if (ParticleCellIndicies[neighbourStartIdx] != neighbourKey)
                     {
                         break;
                     }
                     
                     // Skip if looking at self
-                    if (neighbourIndex == particleIdx)
+                    if (neighbourPosIdx != particleIdx)
                     {
-                        continue;
-                    }
-                        
-                    float3 neighbourPos = PredictedPositions[neighbourIndex];
-                    float3 offsetToNeighbour = neighbourPos - pos;
-                    float sqrDstToNeighbour = dot(offsetToNeighbour, offsetToNeighbour);
+                        float3 neighbourPos = PredictedPositions[neighbourPosIdx];
+                        float3 offsetToNeighbour = neighbourPos - pos;
+                        float sqrDstToNeighbour = dot(offsetToNeighbour, offsetToNeighbour);
                     
-                    // Skip if not within radius
-                    if (sqrDstToNeighbour > radius2)
-                    {
-                        continue;
+                        // Skip if not within radius
+                        if (sqrDstToNeighbour <= radius2)
+                        {
+                            // Calculate pressure force
+                            float densityNeighbour = Densities[neighbourPosIdx];
+                            float neighbourPressure = PressureFromDensity(densityNeighbour);
+                            float sharedPressure = (pressure + neighbourPressure) / 2;
+
+                            float dst = sqrt(sqrDstToNeighbour);
+                            float3 dir = dst > 0 ? offsetToNeighbour / dst : float3(0, 1, 0);
+
+                            pressureForce += dir * DensityDerivative(dst, smoothingRadius) * sharedPressure / densityNeighbour;
+                        }
                     }
-                        
-                    // Calculate pressure force
-                    float densityNeighbour = Densities[neighbourIndex];
-                    float neighbourPressure = PressureFromDensity(densityNeighbour);
-                    float sharedPressure = (pressure + neighbourPressure) / 2;
-
-                    float dst = sqrt(sqrDstToNeighbour);
-                    float3 dir = dst > 0 ? offsetToNeighbour / dst : float3(0, 1, 0);
-
-                    pressureForce += dir * DensityDerivative(dst, smoothingRadius) * sharedPressure / densityNeighbour;
                     
                     neighbourStartIdx++;
                 }
             }
         }
     }
-    */
 
-    // For each particle
-    for (uint i = 0; i < numParticles; i++)
-    {
-        uint neighbourIndex = i;
-	    // Skip if looking at self
-        if (neighbourIndex == particleIdx)
-            continue;
-
-        float3 neighbourPos = PredictedPositions[neighbourIndex];
-        float3 offsetToNeighbour = neighbourPos - pos;
-        float sqrDstToNeighbour = dot(offsetToNeighbour, offsetToNeighbour);
-
-	    // Skip if not within radius
-        if (sqrDstToNeighbour > radius2)
-            continue;
-
-	    // Calculate pressure force
-        float densityNeighbour = Densities[neighbourIndex];
-        float neighbourPressure = PressureFromDensity(densityNeighbour);
-        float sharedPressure = (pressure + neighbourPressure) / 2;
-
-        float dst = sqrt(sqrDstToNeighbour);
-        float3 dir = dst > 0 ? offsetToNeighbour / dst : float3(0, 1, 0);
-
-        pressureForce += dir * DensityDerivative(dst, smoothingRadius) * sharedPressure / densityNeighbour;
-    }
-
-    float3 acceleration = pressureForce / density;
-    Velocities[id.x] += acceleration * deltaTime;
-    //Velocities[particleIdx] += acceleration * deltaTime;
+    Velocities[particleIdx] += pressureForce / density * deltaTime;
 }
 
 [numthreads(256, 1, 1)]
@@ -360,33 +300,6 @@ void HashParticles(uint3 id : SV_DispatchThreadID)
     ParticleCellIndicies[id.x] = key;
 }
 
-/*
-[numthreads(256, 1, 1)]
-void BitonicSort(uint3 id : SV_DispatchThreadID)
-{    
-    uint i = id.x + id.y * 256 * 1024;
-    uint j = i ^ block;
-    
-    if (j < i || i >= numParticles)
-    {   
-        return;
-    }
-    
-    uint key_i = ParticleIndicies[i];
-    uint key_j = ParticleIndicies[j];
-    float value_i = ParticleCellIndicies[key_i];
-    float value_j = ParticleCellIndicies[key_j];
-    
-    float diff = (value_i - value_j) * ((i & dimension) == 0 ? 1 : -1);
-    if (diff > 0)
-    {
-        ParticleIndicies[i] = key_j;
-        ParticleIndicies[j] = key_i;
-    }
-
-}
-*/
-
 [numthreads(256, 1, 1)]
 void BitonicSort(uint3 id : SV_DispatchThreadID)
 {
@@ -398,8 +311,7 @@ void BitonicSort(uint3 id : SV_DispatchThreadID)
 	
     uint key_i = ParticleIndicies[i];
     uint key_j = ParticleIndicies[j];
-    //float value_i = ParticleCellIndicies[key_i];
-    //float value_j = ParticleCellIndicies[key_j];
+
     float value_i = ParticleCellIndicies[i];
     float value_j = ParticleCellIndicies[j];
 	

@@ -60,12 +60,14 @@ public class FluidSimulation3D : MonoBehaviour
     private float3[] predictedPositions;
     private float3[] velocities;
     private float[] densities;
-    public uint[] particleIndicies;
-    public uint[] particleCellIndicies;
-    public uint[] cellOffsets;
     private Vector3[] colors;
 
-    public uint[] keyValueDebugger;     // For debug use
+    // Can be public for debug purpose
+    private uint[] particleIndicies;
+    private uint[] particleCellIndicies;
+    private uint[] cellOffsets;
+
+    private uint[] keyValueDebugger;     // For debug use
 
     public enum kernels
     { 
@@ -348,8 +350,7 @@ public class FluidSimulation3D : MonoBehaviour
             for (var block = dim >> 1; block > 0; block >>= 1)
             {
                 computeShader.SetInt("block", block);
-                //Dispatch(computeShader, count, (int)kernels.BitonicSort);
-                computeShader.Dispatch((int)kernels.BitonicSort, count / 256, 1, 1);
+                Dispatch(computeShader, count, (int)kernels.BitonicSort);
             }
         }
     }
