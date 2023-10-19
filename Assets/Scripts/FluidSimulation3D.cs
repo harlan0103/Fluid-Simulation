@@ -1,13 +1,11 @@
 using System;
 using Unity.Mathematics;
-using Unity.VisualScripting;
 using UnityEngine;
 
 public class FluidSimulation3D : MonoBehaviour
 {
     [Header("Scene Setting")]
     public float3 boundingBox = new float3(10f, 11f, 6f);
-    public GameObject groundObj;
     public float iterationsPerframe = 3;
     public float timeScale = 0.8f;
 
@@ -106,24 +104,13 @@ public class FluidSimulation3D : MonoBehaviour
         Graphics.DrawMeshInstancedIndirect(mesh, subMeshIndex, particleMat, new Bounds(Vector3.zero, new Vector3(100.0f, 100.0f, 100.0f)), argsBuffer);
     }
 
-    private void OnDrawGizmos()
-    {
-        Gizmos.color = Color.blue;
-        Gizmos.DrawWireCube(Vector3.zero, boundingBox);
-    }
-
-#if UNITY_EDITOR
-    private void OnValidate()
-    {
-        UpdateGroundPosition();
-    }
-#endif
-
     void InitializeComputeBuffers()
     {
         computeShader = Resources.Load<ComputeShader>("FluidSim3D");
 
         numParticles = spawnCubeSize.x * spawnCubeSize.y * spawnCubeSize.z;
+
+        boundingBox = gameObject.GetComponent<BoundingBoxController>().GetBoundingBox();
 
         // Initialize Buffers
         positionBuffer = new ComputeBuffer(numParticles, sizeof(float) * 3);
@@ -255,7 +242,7 @@ public class FluidSimulation3D : MonoBehaviour
         computeShader.SetFloat("deltaTime", deltaTime);
         computeShader.SetFloat("gravity", gravity);
         computeShader.SetFloat("collisionDamping", collisionDamping);
-        computeShader.SetVector("boundsSize", new Vector4(boundingBox.x, boundingBox.y, boundingBox.z));
+        computeShader.SetVector("boundsSize", transform.localScale);
         computeShader.SetFloat("smoothingRadius", smoothRadius);
         computeShader.SetFloat("targetDensity", targetDensity);
         computeShader.SetFloat("pressureMultiplier", pressureMultiplier);
@@ -272,6 +259,10 @@ public class FluidSimulation3D : MonoBehaviour
         computeShader.SetFloat("radius3", smoothRadius * smoothRadius * smoothRadius);
         computeShader.SetFloat("SpikyPow2ScalingFactor", 15 / (2 * Mathf.PI * Mathf.Pow(smoothRadius, 5)));
         computeShader.SetFloat("DerivativeSpikyPow2ScalingFactor", 15 / (Mathf.Pow(smoothRadius, 5) * Mathf.PI));
+
+        // Matrix
+        computeShader.SetMatrix("localToWorldMatrix", transform.localToWorldMatrix);
+        computeShader.SetMatrix("WorldToLocalMatrix", transform.worldToLocalMatrix);
     }
 
     void RunSimulationStep()
@@ -332,13 +323,6 @@ public class FluidSimulation3D : MonoBehaviour
         }
 
         return points;
-    }
-
-    void UpdateGroundPosition()
-    {
-        float yOffset = boundingBox.y / 2f;
-        groundObj.transform.position = new Vector3(0, -yOffset - 0.15f, 0);
-        groundObj.transform.localScale = new Vector3(boundingBox.x, 0.3f, boundingBox.z);
     }
 
     public void SortPartices()

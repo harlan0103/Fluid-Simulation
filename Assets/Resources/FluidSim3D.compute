@@ -44,6 +44,10 @@ float DerivativeSpikyPow2ScalingFactor;
 int block;
 int dimension;
 
+// Matrix
+float3x3 localToWorldMatrix;
+float3x3 WorldToLocalMatrix;
+
 // Hash functions
 int3 PosToCellCoord(float3 pos)
 {
@@ -97,11 +101,13 @@ float PressureFromDensity(float density)
 
 void HandleCollisions(uint particleIndex)
 {
-    float3 pos = Positions[particleIndex];
-    float3 vel = Velocities[particleIndex];
+    // Transfer position and velocity from world position to bounding box local position
+    float3 pos = mul(WorldToLocalMatrix, Positions[particleIndex]);
+    float3 vel = mul(WorldToLocalMatrix, Velocities[particleIndex]);
 
 	// Keep particle inside bounds
-    const float3 halfSize = boundsSize * 0.5;
+    // Transfered to bounding box local position
+    const float3 halfSize = 0.5;
     float3 edgeDst = halfSize - abs(pos);
 
     if (edgeDst.x <= 0)
@@ -121,8 +127,9 @@ void HandleCollisions(uint particleIndex)
     }
 
 	// Update position and velocity
-    Positions[particleIndex] = pos;
-    Velocities[particleIndex] = vel;
+    // Transfer back from bounding box local position to world position
+    Positions[particleIndex] = mul(localToWorldMatrix, pos);
+    Velocities[particleIndex] = mul(localToWorldMatrix, vel);
 }
 
 [numthreads(256,1,1)]
